@@ -11,6 +11,7 @@
 apk_output/
 temp_site/
 deploy_temp/
+android_build/
 Orbit_staging.apk
 
 # Local runtime & personal data

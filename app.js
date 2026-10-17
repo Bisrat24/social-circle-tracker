@@ -535,6 +535,14 @@ class SocialCircleApp {
       return;
     }
 
+    if (window.AndroidBridge && typeof window.AndroidBridge.showNotification === 'function') {
+      badge.className = 'notif-badge badge-granted';
+      badge.textContent = '🟢 Native Android Active';
+      const banner = document.getElementById('notificationPermissionBanner');
+      if (banner) banner.style.display = 'none';
+      return;
+    }
+
     if (Notification.permission === 'granted') {
       badge.className = 'notif-badge badge-granted';
       badge.textContent = '🟢 Enabled & Active';
@@ -550,6 +558,12 @@ class SocialCircleApp {
   }
 
   async requestNotificationPermission() {
+    if (window.AndroidBridge && typeof window.AndroidBridge.showNotification === 'function') {
+      this.updateNotificationUI();
+      this.showToast('🔔 Android notification access active!', 'success');
+      return true;
+    }
+
     if (!('Notification' in window)) {
       this.showToast('System notifications are not supported in this environment.', 'warning');
       return false;
@@ -576,12 +590,13 @@ class SocialCircleApp {
   }
 
   async sendTestNotification() {
-    if (!('Notification' in window)) {
-      this.showToast('Notifications not supported.', 'warning');
+    const hasNative = (window.AndroidBridge && typeof window.AndroidBridge.showNotification === 'function');
+    if (!hasNative && !('Notification' in window)) {
+      this.showToast('Notifications not supported in this browser.', 'warning');
       return;
     }
 
-    if (Notification.permission !== 'granted') {
+    if (!hasNative && Notification.permission !== 'granted') {
       const granted = await this.requestNotificationPermission();
       if (!granted) return;
     }
@@ -599,6 +614,20 @@ class SocialCircleApp {
 
   dispatchNotification(title, options = {}) {
     this.playChimeSound();
+
+    if (window.AndroidBridge && typeof window.AndroidBridge.showNotification === 'function') {
+      try {
+        const bodyText = options.body || options.message || '';
+        window.AndroidBridge.showNotification(title, bodyText);
+        if (typeof window.AndroidBridge.vibrate === 'function') {
+          window.AndroidBridge.vibrate(200);
+        }
+        return;
+      } catch (e) {
+        console.warn('AndroidBridge dispatch error:', e);
+      }
+    }
+
     if ('vibrate' in navigator) {
       try { navigator.vibrate([150, 80, 150]); } catch (e) {}
     }
@@ -615,7 +644,8 @@ class SocialCircleApp {
   }
 
   checkAndSendDueNotifications() {
-    if (!('Notification' in window) || Notification.permission !== 'granted') {
+    const hasNative = (window.AndroidBridge && typeof window.AndroidBridge.showNotification === 'function');
+    if (!hasNative && (!('Notification' in window) || Notification.permission !== 'granted')) {
       return;
     }
 

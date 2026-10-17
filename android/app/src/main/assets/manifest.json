@@ -1,0 +1,48 @@
+{
+  "name": "Orbit: Social Circle & Connection Tracker",
+  "short_name": "Orbit",
+  "description": "Never lose contact with friends. Connection leveler, callback reminders, and Google sync.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0a0d14",
+  "theme_color": "#121622",
+  "categories": ["social", "productivity", "lifestyle"],
+  "icons": [
+    {
+      "src": "icons/icon-96.png",
+      "sizes": "96x96",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Promised Call Backs",
+      "short_name": "Call Backs",
+      "description": "View urgent promised call backs",
+      "url": "./index.html?filter=owe_call",
+      "icons": [{ "src": "icons/icon-96.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "Log Connection",
+      "short_name": "Log Call",
+      "description": "Quickly log a call, meetup, or ping",
+      "url": "./index.html?action=log",
+      "icons": [{ "src": "icons/icon-96.png", "sizes": "96x96" }]
+    }
+  ]
+}

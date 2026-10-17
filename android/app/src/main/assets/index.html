@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Orbit - Social Circle & Connection Tracker</title>
+  
+  <!-- PWA & Android Meta Tags -->
+  <meta name="theme-color" content="#121622">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+
+  <!-- Google Identity Services SDK -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body class="theme-dark">
+  <div id="app" class="app-container">
+    
+    <!-- TOP HEADER -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="brand-logo">
+          <span class="logo-orbit-ring"></span>
+          <span class="logo-core">🪐</span>
+        </div>
+        <div class="brand-text">
+          <h1>Orbit</h1>
+          <p class="tagline">Stay connected with the people who matter</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div class="search-box">
+          <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input type="text" id="searchInput" placeholder="Search friends, notes, circles...">
+          <button id="clearSearchBtn" class="clear-search-btn" title="Clear search" style="display:none;">&times;</button>
+        </div>
+
+        <button id="googleSyncPill" class="google-sync-pill" title="Google Account Cloud Sync">
+          <span id="syncStatusDot" class="sync-dot dot-disconnected"></span>
+          <img id="syncUserAvatar" class="sync-avatar" style="display:none;" alt="User">
+          <span id="syncStatusText">Sync with Google</span>
+        </button>
+
+        <button id="quickLogBtn" class="btn btn-secondary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          <span>Log Contact</span>
+        </button>
+
+        <button id="addContactBtn" class="btn btn-primary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          <span>Add Friend</span>
+        </button>
+
+        <div class="header-tools">
+          <button id="themeToggleBtn" class="icon-btn" title="Toggle Dark/Light Mode">
+            <span id="themeIcon">☀️</span>
+          </button>
+          <button id="dataSettingsBtn" class="icon-btn" title="Backup / Restore">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- ANDROID INSTALL PWA BANNER -->
+    <div id="androidInstallBanner" class="android-install-banner" style="display:none;">
+      <div class="banner-left">
+        <img src="icons/icon-96.png" class="install-icon" alt="Orbit">
+        <div class="install-text">
+          <strong>Install Orbit on Android</strong>
+          <span>Seamless access, callback notifications & Google Sync</span>
+        </div>
+      </div>
+      <div class="banner-actions">
+        <button id="btnInstallApp" class="btn btn-sm btn-primary">Install App</button>
+        <button id="btnDismissInstall" class="dismiss-install-btn">&times;</button>
+      </div>
+    </div>
+
+    <!-- DASHBOARD STATS ROW -->
+    <section class="stats-overview">
+      <div class="stat-card" data-filter="all">
+        <div class="stat-icon circle-purple">👥</div>
+        <div class="stat-info">
+          <span class="stat-label">Total Friends</span>
+          <span class="stat-value" id="statTotalContacts">0</span>
+        </div>
+      </div>
+
+      <div class="stat-card stat-alert" id="statCardOweCall" data-filter="owe_call">
+        <div class="stat-icon circle-rose">⏳</div>
+        <div class="stat-info">
+          <span class="stat-label">Promised Call Backs</span>
+          <span class="stat-value" id="statPromisedCalls">0</span>
+        </div>
+      </div>
+
+      <div class="stat-card" id="statCardNeedWater" data-filter="needs_water">
+        <div class="stat-icon circle-amber">🍂</div>
+        <div class="stat-info">
+          <span class="stat-label">Due for Check-in</span>
+          <span class="stat-value" id="statNeedsCheckin">0</span>
+        </div>
+      </div>
+
+      <div class="stat-card" data-filter="strong">
+        <div class="stat-icon circle-green">✨</div>
+        <div class="stat-info">
+          <span class="stat-label">Flourishing Bonds</span>
+          <span class="stat-value" id="statFlourishing">0</span>
+        </div>
+      </div>
+
+      <div class="stat-card" data-filter="two_way">
+        <div class="stat-icon circle-cyan">🔄</div>
+        <div class="stat-info">
+          <span class="stat-label">Mutual Reciprocity</span>
+          <span class="stat-value" id="statReciprocityScore">0%</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- URGENT CALLBACK BANNER / REMINDER DECK -->
+    <section id="promisedCallsDeck" class="promised-calls-section" style="display:none;">
+      <div class="section-badge-header">
+        <div class="badge-title">
+          <span class="badge-pulse"></span>
+          <h2>I Promised to Call Back <span class="badge-count" id="promisedCountBadge">0</span></h2>
+        </div>
+        <p class="badge-hint">Never leave a friend hanging. Beat the awkwardness before it grows!</p>
+      </div>
+      <div id="promisedCallsList" class="promised-cards-grid">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- FILTER & CONTROL TOOLBAR -->
+    <section class="toolbar-section">
+      <div class="circles-tabs" id="circlesTabs">
+        <button class="circle-tab active" data-circle="all">All Friends</button>
+        <button class="circle-tab" data-circle="inner">🌟 Inner Circle</button>
+        <button class="circle-tab" data-circle="close">💛 Close Friends</button>
+        <button class="circle-tab" data-circle="old">🌿 Old Friends</button>
+        <button class="circle-tab" data-circle="family">🏠 Family</button>
+        <button class="circle-tab" data-circle="casual">☕ Casual</button>
+      </div>
+
+      <div class="toolbar-filters">
+        <div class="filter-dropdown-wrap">
+          <label for="statusFilterSelect">Status:</label>
+          <select id="statusFilterSelect">
+            <option value="all">Any Status</option>
+            <option value="owe_call">⏳ Owe a Call</option>
+            <option value="cooling">🍂 Cooling Down / Overdue</option>
+            <option value="thriving">✨ Flourishing / Active</option>
+            <option value="they_reached_out">📥 They Reached Out Last</option>
+          </select>
+        </div>
+
+        <div class="filter-dropdown-wrap">
+          <label for="sortSelect">Sort By:</label>
+          <select id="sortSelect">
+            <option value="urgency">⚠️ Need Attention Most</option>
+            <option value="level_desc">🏆 Highest Connection Level</option>
+            <option value="level_asc">🌱 Growing Bonds (Lowest Lv)</option>
+            <option value="recent">🕒 Recently Contacted</option>
+            <option value="name">🔤 Alphabetical (A-Z)</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- MAIN CONTACTS GRID -->
+    <main class="contacts-main">
+      <div id="contactsGrid" class="contacts-grid">
+        <!-- Contact cards injected by JS -->
+      </div>
+
+      <div id="emptyState" class="empty-state" style="display:none;">
+        <div class="empty-illustration">🪐</div>
+        <h3 id="emptyStateTitle">No contacts found</h3>
+        <p id="emptyStateMsg">Try adjusting your search or circle filter, or add a new friend to start tracking your circle!</p>
+        <button class="btn btn-primary" id="emptyAddBtn">Add First Friend</button>
+      </div>
+    </main>
+
+  </div><!-- /app-container -->
+
+  <!-- MODAL: ADD / EDIT CONTACT -->
+  <div id="contactModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="contactModalTitle">Add New Friend</h3>
+        <button class="modal-close-btn" data-close="contactModal">&times;</button>
+      </div>
+      <form id="contactForm" class="modal-body">
+        <input type="hidden" id="editContactId">
+
+        <div class="form-row">
+          <div class="form-group flex-2">
+            <label for="formName">Full Name *</label>
+            <input type="text" id="formName" required placeholder="e.g. Alex Morgan">
+          </div>
+          <div class="form-group flex-1">
+            <label for="formNickname">Nickname / Tag</label>
+            <input type="text" id="formNickname" placeholder="e.g. Al, College buddy">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="formPhone">Phone Number</label>
+            <input type="tel" id="formPhone" placeholder="e.g. +1 555-0192">
+          </div>
+          <div class="form-group flex-1">
+            <label for="formEmail">Email</label>
+            <input type="email" id="formEmail" placeholder="e.g. alex@example.com">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="formCircle">Social Circle Tier</label>
+            <select id="formCircle">
+              <option value="inner">🌟 Inner Circle (Very close)</option>
+              <option value="close" selected>💛 Close Friends (Regular)</option>
+              <option value="old">🌿 Old Friends (Don't lose touch!)</option>
+              <option value="family">🏠 Family / Kin</option>
+              <option value="casual">☕ Casual / Community</option>
+            </select>
+          </div>
+          <div class="form-group flex-1">
+            <label for="formCadence">Desired Contact Rhythm</label>
+            <select id="formCadence">
+              <option value="7">Every 7 Days (Weekly)</option>
+              <option value="14" selected>Every 2 Weeks (Bi-weekly)</option>
+              <option value="30">Every Month (30 Days)</option>
+              <option value="60">Every 2 Months (60 Days)</option>
+              <option value="90">Every Quarter (90 Days)</option>
+              <option value="180">Twice a Year (180 Days)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="connection-leveler-box">
+          <div class="leveler-header">
+            <div>
+              <span class="leveler-label">Connection Leveler (Initial Setup)</span>
+              <p class="form-hint">Auto-levels up with each contact! You can also adjust it anytime.</p>
+            </div>
+            <div class="level-badge" id="formLevelBadge">Level 5: Solid Friend</div>
+          </div>
+          <div class="slider-row">
+            <input type="range" id="formInitialLevel" min="1" max="10" value="5" step="1">
+            <span class="slider-val" id="formLevelVal">Lv 5</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="formBirthday">Birthday (Optional)</label>
+          <input type="date" id="formBirthday">
+        </div>
+
+        <div class="form-group">
+          <label for="formNextTopics">Topics to Ask / Remember for Next Call</label>
+          <input type="text" id="formNextTopics" placeholder="e.g. New puppy, wedding plans, how interview went">
+        </div>
+
+        <div class="form-group">
+          <label for="formNotes">General Notes & Memories</label>
+          <textarea id="formNotes" rows="2" placeholder="Where you met, shared memories, things they love..."></textarea>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-close="contactModal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Friend</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: LOG INTERACTION -->
+  <div id="interactionModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="interactionModalTitle">Log Connection</h3>
+        <button class="modal-close-btn" data-close="interactionModal">&times;</button>
+      </div>
+      <form id="interactionForm" class="modal-body">
+        <input type="hidden" id="logContactId">
+
+        <div class="form-group" id="logContactPickerWrap">
+          <label for="logContactSelect">Friend *</label>
+          <select id="logContactSelect" required>
+            <!-- Injected -->
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Interaction Type</label>
+          <div class="interaction-type-grid">
+            <label class="type-pill selected">
+              <input type="radio" name="interactionType" value="call" checked>
+              <span class="type-icon">📞</span>
+              <span class="type-text">Phone / Video Call</span>
+              <span class="xp-tag">+25 XP</span>
+            </label>
+            <label class="type-pill">
+              <input type="radio" name="interactionType" value="meetup">
+              <span class="type-icon">☕</span>
+              <span class="type-text">Met in Person</span>
+              <span class="xp-tag">+35 XP</span>
+            </label>
+            <label class="type-pill">
+              <input type="radio" name="interactionType" value="message">
+              <span class="type-icon">💬</span>
+              <span class="type-text">Text / Voice Note</span>
+              <span class="xp-tag">+15 XP</span>
+            </label>
+            <label class="type-pill">
+              <input type="radio" name="interactionType" value="promised_call">
+              <span class="type-icon">⏳</span>
+              <span class="type-text">I Promised to Call!</span>
+              <span class="xp-tag alert-xp">Set Reminder</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Reciprocity Tracker: Who initiated? -->
+        <div class="form-group reciprocity-selector-wrap" id="reciprocityFieldGroup">
+          <label>Who reached out / initiated?</label>
+          <div class="reciprocity-options">
+            <label class="radio-card">
+              <input type="radio" name="initiator" value="me" checked>
+              <div class="radio-card-content">
+                <span class="r-icon">🙋‍♂️</span>
+                <span class="r-title">I Reached Out</span>
+                <span class="r-desc">You called or initiated contact</span>
+              </div>
+            </label>
+            <label class="radio-card special-card">
+              <input type="radio" name="initiator" value="them">
+              <div class="radio-card-content">
+                <span class="r-icon">📥</span>
+                <span class="r-title">They Contacted Me!</span>
+                <span class="r-desc">They called/pinged you (+15 Bonus XP)</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Promised callback deadline (shown if promised_call selected) -->
+        <div class="form-group" id="promiseDeadlineContainer" style="display:none;">
+          <label for="promisedDeadline">When did you promise to call back by?</label>
+          <div class="deadline-presets">
+            <button type="button" class="btn-preset" data-hours="4">Later Today (4 hrs)</button>
+            <button type="button" class="btn-preset" data-hours="24">Tomorrow</button>
+            <button type="button" class="btn-preset" data-hours="72">In 3 Days</button>
+            <button type="button" class="btn-preset" data-hours="168">This Weekend</button>
+          </div>
+          <input type="datetime-local" id="promisedDeadline" class="mt-2">
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="interactionDate">Date & Time</label>
+            <input type="datetime-local" id="interactionDate" required>
+          </div>
+          <div class="form-group flex-1">
+            <label for="interactionMood">Vibe / Quality</label>
+            <select id="interactionMood">
+              <option value="great">🔥 Amazing & Energizing</option>
+              <option value="good" selected>😊 Warm & Good</option>
+              <option value="quick">⚡ Quick Check-in</option>
+              <option value="deep">❤️ Deep & Heartfelt</option>
+              <option value="missed">📵 Missed call / Left voicemail</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="interactionSummary">What did you talk about?</label>
+          <textarea id="interactionSummary" rows="2" placeholder="Life updates, shared laughs, what they are currently doing..."></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="interactionNextTopics">Update: Topics to remember for next time</label>
+          <input type="text" id="interactionNextTopics" placeholder="e.g. Ask how the road trip was">
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-close="interactionModal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="saveInteractionBtn">Save & Level Up</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: AWKWARDNESS-BUSTER ICEBREAKER GENERATOR -->
+  <div id="icebreakerModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div class="header-with-badge">
+          <h3>Awkwardness-Buster</h3>
+          <span class="modal-tag">Break the silence with zero weirdness</span>
+        </div>
+        <button class="modal-close-btn" data-close="icebreakerModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="icebreaker-intro">
+          It happens to everyone: you said you'd call back, days or months slipped by, and now picking up the phone feels intimidating. 
+          Use these proven, heartfelt, pressure-free scripts tailored for <strong id="icebreakerFriendName">your friend</strong> to reconnect effortlessly:
+        </p>
+
+        <div class="icebreaker-tabs">
+          <button class="ice-tab active" data-scenario="forgot_call">😅 "I forgot to call back" (Honest & Humorous)</button>
+          <button class="ice-tab" data-scenario="been_months">🌿 "It's been a minute" (Warm & Zero Pressure)</button>
+          <button class="ice-tab" data-scenario="random_thought">💭 "Thought of you" (Casual)</button>
+          <button class="ice-tab" data-scenario="catchup_call">☕ "Quick Catch-up Invite" (Concrete)</button>
+        </div>
+
+        <div class="script-cards-container" id="scriptCardsContainer">
+          <!-- Dynamically populated scripts -->
+        </div>
+
+        <div class="quick-launch-actions" id="quickLaunchActions">
+          <span class="launch-label">Reach out right now:</span>
+          <a id="btnActionCall" href="#" class="btn btn-action-call">📞 Call Now</a>
+          <a id="btnActionWhatsApp" href="#" target="_blank" class="btn btn-action-wa">💬 WhatsApp</a>
+          <a id="btnActionSms" href="#" class="btn btn-action-sms">✉️ SMS</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: CONTACT PROFILE & FULL HISTORY -->
+  <div id="profileModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div class="profile-header-info">
+          <div class="profile-avatar" id="profAvatar">AM</div>
+          <div>
+            <h2 id="profName">Friend Name</h2>
+            <div class="prof-sub">
+              <span id="profCircleBadge" class="circle-pill">Close Friends</span>
+              <span id="profStatusBadge" class="status-pill">Connected</span>
+            </div>
+          </div>
+        </div>
+        <button class="modal-close-btn" data-close="profileModal">&times;</button>
+      </div>
+
+      <div class="modal-body profile-layout">
+        <!-- Left Column: Metrics & Level Adjuster -->
+        <div class="profile-sidebar">
+          
+          <!-- Connection Leveler Card -->
+          <div class="leveler-panel">
+            <div class="panel-header">
+              <h4>Connection Leveler</h4>
+              <span class="level-indicator-badge" id="profLevelBadge">Level 6</span>
+            </div>
+            
+            <div class="level-bar-wrap">
+              <div class="level-progress-bar">
+                <div class="level-progress-fill" id="profProgressFill" style="width: 65%;"></div>
+              </div>
+              <div class="level-meta">
+                <span id="profXpText">650 / 1000 XP</span>
+                <span id="profLevelTitle">Close Friend</span>
+              </div>
+            </div>
+
+            <!-- Manual Leveler Adjustment -->
+            <div class="manual-adjust-box">
+              <label for="profManualSlider">
+                <span>Manual Level Adjustment:</span>
+                <strong id="profManualSliderVal">Lv 6</strong>
+              </label>
+              <input type="range" id="profManualSlider" min="1" max="10" step="1" value="6">
+              <button id="applyManualLevelBtn" class="btn btn-sm btn-secondary w-full mt-2">Update Connection Level</button>
+            </div>
+
+            <!-- Reciprocity Meter -->
+            <div class="reciprocity-meter-box">
+              <span class="rec-label">Mutual Reciprocity Balance</span>
+              <div class="rec-split-bar">
+                <div class="rec-user-fill" id="profRecUserFill" style="width:50%;" title="You initiated">50% You</div>
+                <div class="rec-them-fill" id="profRecThemFill" style="width:50%;" title="They initiated">50% Them</div>
+              </div>
+              <p class="rec-caption" id="profRecCaption">Balanced two-way friendship!</p>
+            </div>
+          </div>
+
+          <!-- Quick Details -->
+          <div class="details-panel">
+            <h4>Contact Details</h4>
+            <div class="detail-item" id="profPhoneRow">
+              <span class="d-icon">📞</span>
+              <span id="profPhoneText">No phone</span>
+            </div>
+            <div class="detail-item" id="profEmailRow">
+              <span class="d-icon">✉️</span>
+              <span id="profEmailText">No email</span>
+            </div>
+            <div class="detail-item">
+              <span class="d-icon">⏱️</span>
+              <span>Cadence: <strong id="profCadenceText">Every 14 days</strong></span>
+            </div>
+            <div class="detail-item" id="profBirthdayRow">
+              <span class="d-icon">🎂</span>
+              <span id="profBirthdayText">None set</span>
+            </div>
+          </div>
+
+          <!-- Things to Ask Next Time -->
+          <div class="topics-panel">
+            <h4>Next Call Reminders</h4>
+            <div id="profNextTopicsBox" class="topics-bubble">
+              Ask about their new puppy!
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Timeline & Log History -->
+        <div class="profile-content">
+          <div class="timeline-header">
+            <h4>Interaction Timeline</h4>
+            <div class="timeline-actions">
+              <button id="profLogInterBtn" class="btn btn-sm btn-primary">+ Log Contact</button>
+              <button id="profIcebreakerBtn" class="btn btn-sm btn-secondary">⚡ Icebreaker</button>
+              <button id="profEditBtn" class="btn btn-sm btn-ghost">✏️ Edit</button>
+            </div>
+          </div>
+
+          <div class="timeline-list" id="profTimelineList">
+            <!-- Timeline items injected -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: DATA BACKUP / SETTINGS -->
+  <div id="dataSettingsModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Settings & Data Management</h3>
+        <button class="modal-close-btn" data-close="dataSettingsModal">&times;</button>
+      </div>
+      <div class="modal-body settings-body">
+        <div class="settings-group">
+          <h4>Export & Backup</h4>
+          <p class="text-sm">Download your entire social circle, contact history, and connection levels as a JSON file.</p>
+          <button id="exportDataBtn" class="btn btn-secondary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export All Data (JSON)
+          </button>
+        </div>
+
+        <div class="settings-group">
+          <h4>Import & Restore</h4>
+          <p class="text-sm">Restore your social circle from a previously exported backup file.</p>
+          <input type="file" id="importFileInput" accept=".json" style="display:none;">
+          <button id="importDataBtn" class="btn btn-secondary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Import Data File
+          </button>
+        </div>
+
+        <div class="settings-group">
+          <h4>Audio & Notifications</h4>
+          <p class="text-sm">Enable sound cues and browser notifications for callbacks that are due.</p>
+          <button id="enableSoundBtn" class="btn btn-ghost">🔔 Test Chime Sound</button>
+        </div>
+
+        <div class="settings-group danger-zone">
+          <h4>Reset Options</h4>
+          <div class="danger-actions">
+            <button id="loadSampleDataBtn" class="btn btn-ghost">🔄 Reload Sample Friends</button>
+            <button id="clearAllDataBtn" class="btn btn-danger">⚠️ Wipe All Data</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: GOOGLE ACCOUNT SYNC -->
+  <div id="googleSyncModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div class="header-with-badge">
+          <h3>Google Account Cloud Sync</h3>
+          <span class="modal-tag">Seamlessly sync friends, callbacks, and levels across PC and Android</span>
+        </div>
+        <button class="modal-close-btn" data-close="googleSyncModal">&times;</button>
+      </div>
+      <div class="modal-body google-sync-body">
+        
+        <!-- Warning for file:// origin with 1-click switch button -->
+        <div id="fileOriginWarning" class="origin-warning-banner" style="display:none;">
+          <div class="origin-warning-content">
+            <span class="warn-icon">⚠️</span>
+            <div>
+              <strong>You are running Orbit via local file mode (<code>file://</code>)</strong>
+              <p>Google OAuth strictly blocks <code>file://</code> URLs for security. To enable Google Sign-In and Android Sync, run Orbit via your local server.</p>
+            </div>
+          </div>
+          <a href="http://localhost:5000/" class="btn btn-sm btn-primary">🚀 Switch to http://localhost:5000</a>
+        </div>
+
+        <!-- Connected Account Card (Shown when signed in) -->
+        <div id="googleAccountProfileCard" class="google-profile-card" style="display:none;">
+          <img id="googleProfImg" src="" alt="Google Profile" class="google-profile-img">
+          <div class="google-profile-info">
+            <h4 id="googleProfName">Bisrat</h4>
+            <span id="googleProfEmail">user@gmail.com</span>
+            <span class="sync-active-badge">🟢 Google Account Active & Synced</span>
+          </div>
+          <button id="btnGoogleDisconnect" class="btn btn-sm btn-ghost">Disconnect</button>
+        </div>
+
+        <!-- SYNC METHOD 1: GOOGLE ACCOUNT IDENTITY & DIRECT DRIVE BACKUP -->
+        <div class="sync-config-section">
+          <div class="section-badge-tag">Method 1 (Instant — Zero Setup)</div>
+          <h4>Link Your Google Account</h4>
+          <p class="text-sm">Link your Google email address to enable personalized sync identity and 1-click Google Drive backup:</p>
+          
+          <div class="form-row mt-2">
+            <div class="form-group flex-2">
+              <label for="googleAccountEmailInput">Your Google Email Address</label>
+              <input type="email" id="googleAccountEmailInput" placeholder="e.g. yourname@gmail.com">
+            </div>
+            <div class="form-group flex-1" style="justify-content: flex-end;">
+              <button id="btnLinkGoogleEmail" class="btn btn-primary w-full">Link Account</button>
+            </div>
+          </div>
+
+          <div class="sync-drive-actions mt-2">
+            <button id="btnExportToGoogleDrive" class="btn btn-secondary">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              💾 Save Backup to Google Drive
+            </button>
+            <button id="btnSyncNowGlobal" class="btn btn-secondary">🔄 Sync Now</button>
+          </div>
+        </div>
+
+        <!-- SYNC METHOD 2: REAL-TIME LOCAL WI-FI SYNC -->
+        <div class="sync-config-section">
+          <div class="section-badge-tag">Method 2 (Local Network)</div>
+          <h4>Real-Time PC ⇄ Android Wi-Fi Sync</h4>
+          <p class="text-sm">When your PC and Android phone are on the same Wi-Fi network, Orbit syncs changes in real-time automatically.</p>
+          
+          <div class="wifi-sync-status-row">
+            <span id="wifiSyncIndicator" class="wifi-dot dot-active"></span>
+            <span id="wifiSyncStatusText">Local Server: <strong>http://localhost:5000/</strong> (Active)</span>
+          </div>
+        </div>
+
+        <!-- SYNC METHOD 3: GOOGLE CLOUD OAUTH2 CLIENT ID -->
+        <div class="sync-config-section">
+          <div class="section-badge-tag">Method 3 (Advanced)</div>
+          <h4>Google Cloud OAuth 2.0 Client (Google Drive AppData)</h4>
+          <p class="text-sm">If you have a Google Cloud Developer OAuth Client ID, enter it below for official background Drive sync:</p>
+          
+          <div class="form-group mt-2">
+            <label for="googleClientIdInput">Google OAuth Client ID</label>
+            <input type="text" id="googleClientIdInput" placeholder="e.g. 1234567890-abcdefg.apps.googleusercontent.com">
+          </div>
+
+          <div class="sync-action-row">
+            <button id="btnSaveClientId" class="btn btn-secondary">Save Client ID</button>
+            <button id="btnGoogleConnect" class="btn btn-primary btn-google-brand">
+              <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.54 0 2.93.56 4.02 1.48l3.01-3.01C17.21 1.74 14.77 1 12 1 7.42 1 3.51 3.6 1.7 7.37l3.7 2.87C6.28 7.35 8.9 5 12 5z"/><path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58l3.7 2.87c2.16-1.99 3.72-4.94 3.72-8.69z"/><path fill="#FBBC05" d="M5.4 14.76c-.24-.72-.38-1.49-.38-2.26s.14-1.54.38-2.26L1.7 7.37C.62 9.53 0 11.96 0 14.5s.62 4.97 1.7 7.13l3.7-2.87z"/><path fill="#34A853" d="M12 23.5c3.24 0 5.95-1.08 7.93-2.91l-3.7-2.87c-1.08.72-2.45 1.16-4.23 1.16-3.1 0-5.72-2.35-6.6-5.24L1.7 16.5C3.51 20.27 7.42 23.5 12 23.5z"/></svg>
+              <span>Sign in & Sync with Google</span>
+            </button>
+          </div>
+
+          <details class="setup-guide-box">
+            <summary><strong>Google Client ID Setup Instructions</strong></summary>
+            <ol class="guide-steps">
+              <li>Open <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a>.</li>
+              <li>Create a project, go to <strong>APIs & Services ➔ Credentials</strong>.</li>
+              <li>Click <strong>Create Credentials ➔ OAuth Client ID</strong> (Web application).</li>
+              <li>Under <em>Authorized JavaScript origins</em>, add <code>http://localhost:5000</code>.</li>
+              <li>Paste the Client ID above!</li>
+            </ol>
+          </details>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ANDROID MOBILE BOTTOM NAVIGATION BAR -->
+  <nav class="mobile-bottom-nav">
+    <button class="mobile-nav-item active" data-nav="circle">
+      <span class="nav-icon">🪐</span>
+      <span class="nav-label">Circle</span>
+    </button>
+    <button class="mobile-nav-item" data-nav="callbacks">
+      <span class="nav-icon">⏳</span>
+      <span class="nav-label">Callbacks</span>
+      <span class="nav-badge" id="navPromisedBadge" style="display:none;">0</span>
+    </button>
+    <button class="mobile-nav-item mobile-fab-item" id="mobileFabAdd" title="Add Contact">
+      <div class="fab-circle">➕</div>
+    </button>
+    <button class="mobile-nav-item" id="mobileNavSync">
+      <span class="nav-icon">🔄</span>
+      <span class="nav-label">Sync</span>
+    </button>
+    <button class="mobile-nav-item" data-nav="settings">
+      <span class="nav-icon">⚙️</span>
+      <span class="nav-label">Settings</span>
+    </button>
+  </nav>
+
+  <!-- TOAST NOTIFICATION CONTAINER -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- SCRIPTS -->
+  <script src="google-sync.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

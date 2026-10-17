@@ -1,0 +1,25 @@
+# Binaries and compiled outputs
+*.exe
+*.dll
+*.jar
+*.apk
+*.zip
+*.tmp
+*.log
+
+# Build & staging directories
+apk_output/
+temp_site/
+deploy_temp/
+Orbit_staging.apk
+
+# Local runtime & personal data
+.gitconfig
+active_port.txt
+data_sync.json
+
+# IDE & OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

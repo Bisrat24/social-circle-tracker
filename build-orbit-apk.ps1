@@ -75,7 +75,8 @@ $webFiles = @(
     @{ Name = "styles.css"; Path = (Join-Path $baseDir "styles.css") },
     @{ Name = "app.js"; Path = (Join-Path $baseDir "app.js") },
     @{ Name = "google-sync.js"; Path = (Join-Path $baseDir "google-sync.js") },
-    @{ Name = "manifest.json"; Path = (Join-Path $baseDir "manifest.json") }
+    @{ Name = "manifest.json"; Path = (Join-Path $baseDir "manifest.json") },
+    @{ Name = "service-worker.js"; Path = (Join-Path $baseDir "service-worker.js") }
 )
 
 $iconFiles = @(
@@ -84,8 +85,17 @@ $iconFiles = @(
     @{ Name = "icons/icon-512.png"; Path = (Join-Path $baseDir "icons\icon-512.png") }
 )
 
-# Inject into assets/, assets/demo/, assets/web/, and assets/local/
-foreach ($folder in @("assets/", "assets/demo/", "assets/web/", "assets/local/")) {
+# Inject into all asset root and subdirectories to ensure 100% resolution
+$targetFolders = @(
+    "assets/",
+    "assets/web/",
+    "assets/demo/",
+    "assets/local/",
+    "assets/sites/demo/",
+    "assets/sites/web/"
+)
+
+foreach ($folder in $targetFolders) {
     foreach ($wf in $webFiles) {
         Add-ZipEntryFromFile $zip ($folder + $wf.Name) $wf.Path
     }
@@ -94,21 +104,20 @@ foreach ($folder in @("assets/", "assets/demo/", "assets/web/", "assets/local/")
     }
 }
 
-# Inject valid assets/settings.json (must contain sites[0] to prevent crash!)
+# Inject valid assets/settings.json mapped to assets/web/index.html
 $settingsJson = @'
 {
   "sites": [
     {
-      "url": "https://appassets.androidplatform.net/sites/demo/index.html",
+      "url": "https://appassets.androidplatform.net/assets/web/index.html",
       "title": "Orbit - Social Circle Tracker"
     }
   ],
-  "other": "https://appassets.androidplatform.net/sites/demo/index.html",
+  "other": "https://appassets.androidplatform.net/assets/web/index.html",
   "match": [
     ["host", "equals", "appassets.androidplatform.net"],
     ["host", "equals", "localhost"],
-    ["host", "startsWith", "192.168."],
-    ["host", "startsWith", "10."],
+    ["host", "endsWith", "ship.place"],
     ["host", "endsWith", "google.com"],
     ["host", "endsWith", "googleapis.com"]
   ],
@@ -116,7 +125,7 @@ $settingsJson = @'
     ["path", "endsWith", ".epub"]
   ],
   "remote_debug": false,
-  "console_log": true,
+  "console_log": false,
   "js_interface": false,
   "context_menu": false,
   "not_matching": false,
@@ -128,20 +137,21 @@ $settingsJson = @'
     "DatabaseEnabled": true
   },
   "source": "assets",
-  "timestamp": "2026-10-17T11:00:00Z"
+  "timestamp": "2026-10-17T21:00:00Z"
 }
 '@
 Add-ZipEntryFromText $zip "assets/settings.json" $settingsJson
+Add-ZipEntryFromText $zip "assets/web/settings.json" $settingsJson
 
 # Inject valid assets/local/config.json
 $localConfigJson = @'
 {
   "sites": {
-    "demo/index.html": "Orbit - Social Circle Tracker",
-    "web/index.html": "Orbit - Social Circle Tracker"
+    "web/index.html": "Orbit - Social Circle Tracker",
+    "demo/index.html": "Orbit - Social Circle Tracker"
   },
   "bundles": [],
-  "prefix": "https://appassets.androidplatform.net/sites/"
+  "prefix": "https://appassets.androidplatform.net/assets/"
 }
 '@
 Add-ZipEntryFromText $zip "assets/local/config.json" $localConfigJson

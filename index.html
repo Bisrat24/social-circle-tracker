@@ -89,6 +89,26 @@
       </div>
     </div>
 
+    <!-- OFFLINE STATUS INDICATOR BANNER -->
+    <div id="offlineIndicatorBanner" class="offline-status-banner" style="display:none;">
+      <span>⚡ Offline Mode — Changes are saved locally on your device and will sync when reconnected.</span>
+    </div>
+
+    <!-- NOTIFICATION ACCESS PERMISSION BANNER -->
+    <div id="notificationPermissionBanner" class="notification-prompt-banner" style="display:none;">
+      <div class="banner-left">
+        <span class="bell-icon">🔔</span>
+        <div class="install-text">
+          <strong>Enable Callback Reminders</strong>
+          <span>Get notified when you promised to call a friend back so you never lose touch</span>
+        </div>
+      </div>
+      <div class="banner-actions">
+        <button id="btnGrantNotifications" class="btn btn-sm btn-primary">Enable Notifications</button>
+        <button id="btnDismissNotifications" class="dismiss-install-btn">&times;</button>
+      </div>
+    </div>
+
     <!-- DASHBOARD STATS ROW -->
     <section class="stats-overview">
       <div class="stat-card" data-filter="all">
@@ -585,10 +605,20 @@
           </button>
         </div>
 
-        <div class="settings-group">
-          <h4>Audio & Notifications</h4>
-          <p class="text-sm">Enable sound cues and browser notifications for callbacks that are due.</p>
-          <button id="enableSoundBtn" class="btn btn-ghost">🔔 Test Chime Sound</button>
+        <div class="settings-group notification-settings-card">
+          <h4>Android & System Notifications</h4>
+          <p class="text-sm">Never forget to call friends back. Orbit fires background reminders when promised callbacks are due or friendships need water.</p>
+          
+          <div class="notification-status-row">
+            <span class="status-label">Notification Access:</span>
+            <span id="notifStatusBadge" class="notif-badge badge-pending">Checking...</span>
+          </div>
+
+          <div class="notification-action-buttons">
+            <button id="btnRequestNotifPermission" class="btn btn-secondary btn-sm">🔔 Request Notification Access</button>
+            <button id="btnSendTestNotification" class="btn btn-secondary btn-sm">⚡ Send Test Notification</button>
+            <button id="enableSoundBtn" class="btn btn-ghost btn-sm">🎵 Test Audio Chime</button>
+          </div>
         </div>
 
         <div class="settings-group danger-zone">

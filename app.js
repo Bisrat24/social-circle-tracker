@@ -189,6 +189,8 @@ class SocialCircleApp {
     this.loadTheme();
     this.loadContacts();
     this.registerServiceWorker();
+    this.initNotifications();
+    this.initOfflineHandling();
     try {
       if (this.googleSync) {
         this.googleSync.initGoogleIdentity();
@@ -464,6 +466,234 @@ class SocialCircleApp {
       toast.style.transition = 'all 0.3s ease';
       setTimeout(() => toast.remove(), 300);
     }, 3500);
+  }
+
+  // ========================================================================
+  // ANDROID SYSTEM NOTIFICATIONS & OFFLINE ENGINE
+  // ========================================================================
+
+  initNotifications() {
+    this.updateNotificationUI();
+
+    // Check if permission banner was dismissed previously
+    const dismissed = localStorage.getItem('orbit_notif_banner_dismissed') === 'true';
+    const banner = document.getElementById('notificationPermissionBanner');
+    if (banner && 'Notification' in window) {
+      if (Notification.permission === 'default' && !dismissed) {
+        banner.style.display = 'flex';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    // Start background check loop for callbacks (every 60s)
+    if (!this.notificationCheckInterval) {
+      this.notificationCheckInterval = setInterval(() => {
+        this.checkAndSendDueNotifications();
+      }, 60000);
+    }
+
+    // Also run check immediately and on visibility change
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        this.checkAndSendDueNotifications();
+        this.updateNotificationUI();
+      }
+    });
+
+    setTimeout(() => this.checkAndSendDueNotifications(), 2500);
+  }
+
+  initOfflineHandling() {
+    const updateOfflineUI = () => {
+      const isOnline = navigator.onLine;
+      const banner = document.getElementById('offlineIndicatorBanner');
+      if (banner) {
+        banner.style.display = isOnline ? 'none' : 'block';
+      }
+      if (!isOnline) {
+        this.showToast('Working offline. All changes saved locally on device.', 'info');
+      } else {
+        if (this.googleSync && this.googleSync.accessToken) {
+          this.googleSync.scheduleAutoSync();
+        }
+      }
+    };
+
+    window.addEventListener('online', updateOfflineUI);
+    window.addEventListener('offline', updateOfflineUI);
+    updateOfflineUI();
+  }
+
+  updateNotificationUI() {
+    const badge = document.getElementById('notifStatusBadge');
+    if (!badge) return;
+
+    if (!('Notification' in window)) {
+      badge.className = 'notif-badge badge-denied';
+      badge.textContent = '❌ Unsupported on this browser';
+      return;
+    }
+
+    if (Notification.permission === 'granted') {
+      badge.className = 'notif-badge badge-granted';
+      badge.textContent = '🟢 Enabled & Active';
+      const banner = document.getElementById('notificationPermissionBanner');
+      if (banner) banner.style.display = 'none';
+    } else if (Notification.permission === 'denied') {
+      badge.className = 'notif-badge badge-denied';
+      badge.textContent = '🔴 Blocked in Settings';
+    } else {
+      badge.className = 'notif-badge badge-pending';
+      badge.textContent = '🟡 Permission Needed';
+    }
+  }
+
+  async requestNotificationPermission() {
+    if (!('Notification' in window)) {
+      this.showToast('System notifications are not supported in this environment.', 'warning');
+      return false;
+    }
+
+    try {
+      const permission = await Notification.requestPermission();
+      this.updateNotificationUI();
+
+      if (permission === 'granted') {
+        this.showToast('🔔 Notification access granted! You will be reminded when callbacks are due.', 'success');
+        this.playChimeSound();
+        const banner = document.getElementById('notificationPermissionBanner');
+        if (banner) banner.style.display = 'none';
+        return true;
+      } else if (permission === 'denied') {
+        this.showToast('Notifications were denied. You can enable them in Android App Settings.', 'warning');
+        return false;
+      }
+    } catch (e) {
+      console.warn('Notification permission error:', e);
+    }
+    return false;
+  }
+
+  async sendTestNotification() {
+    if (!('Notification' in window)) {
+      this.showToast('Notifications not supported.', 'warning');
+      return;
+    }
+
+    if (Notification.permission !== 'granted') {
+      const granted = await this.requestNotificationPermission();
+      if (!granted) return;
+    }
+
+    this.dispatchNotification('🪐 Orbit: Notification Test', {
+      body: 'Notifications are working perfectly! You will receive alerts when promised callbacks are due.',
+      icon: 'icons/icon-192.png',
+      badge: 'icons/icon-96.png',
+      tag: 'orbit-test',
+      data: { action: 'test' }
+    });
+
+    this.showToast('Test notification dispatched! Check your notification drawer.', 'success');
+  }
+
+  dispatchNotification(title, options = {}) {
+    this.playChimeSound();
+    if ('vibrate' in navigator) {
+      try { navigator.vibrate([150, 80, 150]); } catch (e) {}
+    }
+
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.ready.then(reg => {
+        reg.showNotification(title, options);
+      }).catch(err => {
+        try { new Notification(title, options); } catch (e) {}
+      });
+    } else if ('Notification' in window && Notification.permission === 'granted') {
+      try { new Notification(title, options); } catch (e) {}
+    }
+  }
+
+  checkAndSendDueNotifications() {
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
+      return;
+    }
+
+    const now = Date.now();
+    let sentCount = 0;
+    const historyKey = 'orbit_notified_callbacks';
+    let notifiedHistory = {};
+    try {
+      notifiedHistory = JSON.parse(localStorage.getItem(historyKey) || '{}');
+    } catch (e) {}
+
+    this.contacts.forEach(contact => {
+      if (contact.promisedCall && contact.promisedCall.isPromised && contact.promisedCall.deadline) {
+        const deadline = new Date(contact.promisedCall.deadline).getTime();
+        // If deadline has passed or is due within 15 minutes
+        if (now >= (deadline - 15 * 60 * 1000)) {
+          const lastSent = notifiedHistory[contact.id] || 0;
+          // Send notification once every 3 hours per overdue friend
+          if (now - lastSent > 3 * 3600 * 1000) {
+            notifiedHistory[contact.id] = now;
+            sentCount++;
+            this.dispatchNotification(`⏳ Call Back Due: ${contact.name}`, {
+              body: `You promised to call back ${contact.name}! Reason: ${contact.promisedCall.reason || 'Check in'}`,
+              icon: 'icons/icon-192.png',
+              badge: 'icons/icon-96.png',
+              tag: `callback-${contact.id}`,
+              requireInteraction: true,
+              data: { contactId: contact.id, action: 'callback' }
+            });
+          }
+        }
+      }
+    });
+
+    try {
+      localStorage.setItem(historyKey, JSON.stringify(notifiedHistory));
+    } catch (e) {}
+  }
+
+  playChimeSound() {
+    try {
+      if (!this.audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) {
+          this.audioCtx = new AudioContext();
+        }
+      }
+      if (!this.audioCtx) return;
+      if (this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume();
+      }
+
+      // Melodic dual tone chime: C5 (523Hz) -> G5 (784Hz)
+      const now = this.audioCtx.currentTime;
+      const osc1 = this.audioCtx.createOscillator();
+      const gain1 = this.audioCtx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(523.25, now);
+      gain1.gain.setValueAtTime(0.15, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+      osc1.connect(gain1);
+      gain1.connect(this.audioCtx.destination);
+      osc1.start(now);
+      osc1.stop(now + 0.35);
+
+      const osc2 = this.audioCtx.createOscillator();
+      const gain2 = this.audioCtx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(783.99, now + 0.12);
+      gain2.gain.setValueAtTime(0.18, now + 0.12);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+      osc2.connect(gain2);
+      gain2.connect(this.audioCtx.destination);
+      osc2.start(now + 0.12);
+      osc2.stop(now + 0.65);
+    } catch (e) {
+      console.warn('Audio chime error:', e);
+    }
   }
 
   // ========================================================================
@@ -1338,10 +1568,37 @@ class SocialCircleApp {
         this.importData(e.target.files[0]);
       }
     };
-    document.getElementById('enableSoundBtn').onclick = () => {
-      this.playChime('success');
-      this.showToast('Chime tested successfully!', 'info');
-    };
+    const enableSoundBtn = document.getElementById('enableSoundBtn');
+    if (enableSoundBtn) {
+      enableSoundBtn.onclick = () => {
+        this.playChimeSound();
+        this.showToast('🎵 Chime tested successfully!', 'info');
+      };
+    }
+
+    const btnReqNotif = document.getElementById('btnRequestNotifPermission');
+    if (btnReqNotif) {
+      btnReqNotif.onclick = () => this.requestNotificationPermission();
+    }
+
+    const btnTestNotif = document.getElementById('btnSendTestNotification');
+    if (btnTestNotif) {
+      btnTestNotif.onclick = () => this.sendTestNotification();
+    }
+
+    const btnGrantNotif = document.getElementById('btnGrantNotifications');
+    if (btnGrantNotif) {
+      btnGrantNotif.onclick = () => this.requestNotificationPermission();
+    }
+
+    const btnDismissNotif = document.getElementById('btnDismissNotifications');
+    if (btnDismissNotif) {
+      btnDismissNotif.onclick = () => {
+        const banner = document.getElementById('notificationPermissionBanner');
+        if (banner) banner.style.display = 'none';
+        localStorage.setItem('orbit_notif_banner_dismissed', 'true');
+      };
+    }
     document.getElementById('loadSampleDataBtn').onclick = () => this.resetSampleData();
     document.getElementById('clearAllDataBtn').onclick = () => this.clearAllData();
 

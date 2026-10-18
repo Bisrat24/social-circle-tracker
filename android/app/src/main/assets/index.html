@@ -109,6 +109,20 @@
       </div>
     </div>
 
+    <!-- MOBILE QUICK ACTIONS: Immediate 1-tap friend creation & calendar scheduling -->
+    <div class="mobile-quick-action-bar">
+      <button id="mobileActionAddFriend" class="btn btn-primary btn-action-pill">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        <span>Add Friend</span>
+      </button>
+      <button id="mobileActionCalendar" class="btn btn-secondary btn-action-pill">
+        <span>📅 Schedule Event</span>
+      </button>
+      <button id="mobileActionQuickLog" class="btn btn-ghost btn-action-pill">
+        <span>📞 Log Call</span>
+      </button>
+    </div>
+
     <!-- DASHBOARD STATS ROW -->
     <section class="stats-overview">
       <div class="stat-card" data-filter="all">
@@ -201,20 +215,6 @@
         </div>
       </div>
     </section>
-
-    <!-- MOBILE QUICK ACTIONS: Direct 1-tap friend creation & calendar scheduling -->
-    <div class="mobile-quick-action-bar">
-      <button id="mobileActionAddFriend" class="btn btn-primary btn-action-pill">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-        <span>Add Friend</span>
-      </button>
-      <button id="mobileActionCalendar" class="btn btn-secondary btn-action-pill">
-        <span>📅 Schedule Event</span>
-      </button>
-      <button id="mobileActionQuickLog" class="btn btn-ghost btn-action-pill">
-        <span>📞 Log Call</span>
-      </button>
-    </div>
 
     <!-- MAIN CONTACTS GRID -->
     <main class="contacts-main">
@@ -660,16 +660,16 @@
       </div>
       <div class="modal-body google-sync-body">
         
-        <!-- Warning for file:// origin with 1-click switch button -->
+        <!-- Native Android / Offline Mode Info Banner -->
         <div id="fileOriginWarning" class="origin-warning-banner" style="display:none;">
           <div class="origin-warning-content">
-            <span class="warn-icon">⚠️</span>
+            <span class="warn-icon">📱</span>
             <div>
-              <strong>You are running Orbit in local file mode (<code>file://</code>)</strong>
-              <p>Google Identity & real-time network sync require the local web server. Run <strong>launch.bat</strong> or click below to open via HTTP.</p>
+              <strong>Orbit Native Android App (Offline First)</strong>
+              <p>Your contacts and callback reminders are stored securely on your device. You can also sync to Google Drive or access the live cloud web app:</p>
             </div>
           </div>
-          <a href="http://localhost:5000/" class="btn btn-sm btn-primary">🚀 Switch to http://localhost:5000/</a>
+          <a href="https://unique-oyster-65y2m.ship.place/" target="_blank" class="btn btn-sm btn-primary">🌐 Open Live Cloud App</a>
         </div>
 
         <!-- Connected Google Account Card (Shown when signed in / linked) -->
@@ -842,13 +842,16 @@
         </div>
 
         <div class="calendar-sync-notice">
-          <span>⚡ <strong>Direct Google Calendar Sync:</strong> Instantly opens in your Google Calendar app with date, time, and friend notes pre-filled!</span>
+          <span>⚡ <strong>Multi-Calendar Sync:</strong> Launches directly into Google Calendar on your device, or download an .ICS invite for any phone calendar!</span>
         </div>
 
         <div class="modal-footer">
           <button type="button" class="btn btn-ghost" data-close="calendarModal">Cancel</button>
+          <button type="button" class="btn btn-secondary" id="btnDownloadIcsEvent" title="Save offline .ics calendar invite">
+            <span>📥 Download .ICS</span>
+          </button>
           <button type="submit" class="btn btn-primary" id="btnSubmitCalendarEvent">
-            <span>📅 Add to Google Calendar</span>
+            <span>📅 Google Calendar</span>
           </button>
         </div>
       </form>

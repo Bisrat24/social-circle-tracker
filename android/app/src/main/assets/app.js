@@ -1639,12 +1639,69 @@ class SocialCircleApp {
     modal.style.display = 'flex';
   }
 
+  downloadIcsFile({ title, description, location, startDate, endDate }) {
+    const pad = n => String(n).padStart(2, '0');
+    const formatIcsDate = d => `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+    const icsContent = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Orbit//Social Circle Tracker//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      'BEGIN:VEVENT',
+      `UID:${Date.now()}@orbit-tracker`,
+      `DTSTAMP:${formatIcsDate(new Date())}`,
+      `DTSTART:${formatIcsDate(startDate)}`,
+      `DTEND:${formatIcsDate(endDate)}`,
+      `SUMMARY:${(title || 'Orbit Catch-up').replace(/[\r\n]+/g, ' ')}`,
+      `DESCRIPTION:${(description || '').replace(/[\r\n]+/g, '\\n')}`,
+      `LOCATION:${(location || '').replace(/[\r\n]+/g, ' ')}`,
+      'STATUS:CONFIRMED',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n');
+
+    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${(title || 'event').replace(/[^a-zA-Z0-9_-]/g, '_')}.ics`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(link.href), 1500);
+  }
+
+  downloadIcsCalendarEvent({ contactId, title, dateTime, durationMinutes = 30, location = '', notes = '' }) {
+    const contact = this.contacts.find(c => c.id === contactId);
+    let startDate = new Date(dateTime);
+    if (isNaN(startDate.getTime())) {
+      startDate = new Date(Date.now() + 24 * 3600 * 1000);
+    }
+    const durationMs = parseInt(durationMinutes, 10) * 60 * 1000;
+    const endDate = new Date(startDate.getTime() + durationMs);
+    const fullDescription = `${notes ? notes + '\n\n' : ''}Scheduled via Orbit - Social Circle Tracker\nContact: ${contact ? contact.name : ''}${contact && contact.phone ? ' (' + contact.phone + ')' : ''}`;
+
+    this.downloadIcsFile({ title, description: fullDescription, location, startDate, endDate });
+
+    if (contact) {
+      contact.promisedCall = {
+        isPromised: true,
+        deadline: startDate.toISOString(),
+        reason: title
+      };
+      this.saveContacts();
+      this.render();
+      this.showToast(`📥 Saved calendar invite for ${contact.name}!`, 'success');
+      this.playChimeSound();
+    }
+    this.closeModal('calendarModal');
+  }
+
   scheduleGoogleCalendarEvent({ contactId, title, dateTime, durationMinutes = 30, location = '', notes = '' }) {
     const contact = this.contacts.find(c => c.id === contactId);
-    const startDate = new Date(dateTime);
+    let startDate = new Date(dateTime);
     if (isNaN(startDate.getTime())) {
-      this.showToast('Please specify a valid date and time.', 'warning');
-      return;
+      startDate = new Date(Date.now() + 24 * 3600 * 1000);
     }
 
     const durationMs = parseInt(durationMinutes, 10) * 60 * 1000;
@@ -1659,21 +1716,34 @@ class SocialCircleApp {
     const endStr = formatGCalDate(endDate);
 
     const fullDescription = `${notes ? notes + '\n\n' : ''}Scheduled via Orbit - Social Circle Tracker\nContact: ${contact ? contact.name : ''}${contact && contact.phone ? ' (' + contact.phone + ')' : ''}`;
+    const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${startStr}/${endStr}&details=${encodeURIComponent(fullDescription)}&location=${encodeURIComponent(location)}`;
 
-    // 1. Native Android App Intent
+    // 1. Native Android App Bridge with fallback to universal gcalUrl
     if (window.AndroidBridge && typeof window.AndroidBridge.openGoogleCalendar === 'function') {
       try {
-        window.AndroidBridge.openGoogleCalendar(title, fullDescription, location, startDate.getTime(), endDate.getTime());
+        window.AndroidBridge.openGoogleCalendar(title, fullDescription, location, startDate.getTime(), endDate.getTime(), gcalUrl);
       } catch (e) {
         console.warn('AndroidBridge calendar error:', e);
+        try {
+          const win = window.open(gcalUrl, '_blank');
+          if (!win || win.closed || typeof win.closed === 'undefined') {
+            window.location.href = gcalUrl;
+          }
+        } catch (ignored) {}
       }
     } else {
-      // 2. Fallback to universal web Google Calendar URL
-      const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${startStr}/${endStr}&details=${encodeURIComponent(fullDescription)}&location=${encodeURIComponent(location)}`;
-      window.open(gcalUrl, '_blank');
+      // 2. Mobile / Desktop Browser handler (resilient to popup blockers)
+      try {
+        const win = window.open(gcalUrl, '_blank');
+        if (!win || win.closed || typeof win.closed === 'undefined') {
+          window.location.href = gcalUrl;
+        }
+      } catch (err) {
+        window.location.href = gcalUrl;
+      }
     }
 
-    // Direct Google Calendar API sync if OAuth token active
+    // 3. Direct Google Calendar API sync if OAuth token active
     if (this.googleSync && this.googleSync.accessToken) {
       this.googleSync.createGoogleCalendarEvent({
         title,
@@ -1684,7 +1754,7 @@ class SocialCircleApp {
       }).catch(e => console.warn('OAuth calendar sync note:', e));
     }
 
-    // 3. Keep Orbit in sync: Record promised callback / program
+    // 4. Keep Orbit in sync: Record promised callback & update timeline
     if (contact) {
       contact.promisedCall = {
         isPromised: true,
@@ -1693,7 +1763,7 @@ class SocialCircleApp {
       };
       this.saveContacts();
       this.render();
-      this.showToast(`📅 Scheduled with ${contact.name}! Added to Google Calendar.`, 'success');
+      this.showToast(`📅 Scheduled with ${contact.name}! Opening Google Calendar...`, 'success');
       this.playChimeSound();
     }
 
@@ -1733,7 +1803,7 @@ class SocialCircleApp {
       };
     }
 
-    // Calendar Form submission
+    // Calendar Form submission & .ICS download
     const calForm = document.getElementById('calendarForm');
     if (calForm) {
       calForm.onsubmit = (e) => {
@@ -1745,6 +1815,19 @@ class SocialCircleApp {
         const location = document.getElementById('calLocation').value.trim();
         const notes = document.getElementById('calNotes').value.trim();
         this.scheduleGoogleCalendarEvent({ contactId, title, dateTime, durationMinutes, location, notes });
+      };
+    }
+
+    const btnIcs = document.getElementById('btnDownloadIcsEvent');
+    if (btnIcs) {
+      btnIcs.onclick = () => {
+        const contactId = document.getElementById('calFriendSelect').value;
+        const title = document.getElementById('calEventTitle').value.trim() || 'Orbit Program';
+        const dateTime = document.getElementById('calDateTime').value;
+        const durationMinutes = document.getElementById('calDuration').value;
+        const location = document.getElementById('calLocation').value.trim();
+        const notes = document.getElementById('calNotes').value.trim();
+        this.downloadIcsCalendarEvent({ contactId, title, dateTime, durationMinutes, location, notes });
       };
     }
 

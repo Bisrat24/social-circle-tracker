@@ -73,7 +73,7 @@ class GoogleSyncEngine {
         try {
           this.tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: this.clientId,
-            scope: 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
+            scope: 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
             callback: (tokenResponse) => this.handleTokenResponse(tokenResponse),
             error_callback: (err) => {
               console.error('Google OAuth Error:', err);
@@ -103,21 +103,20 @@ class GoogleSyncEngine {
   // ========================================================================
 
   async checkServerStatusAndSync() {
-    const endpointsToTry = [];
-    if (window.location.protocol.startsWith('http') && !window.location.hostname.includes('appassets')) {
-      endpointsToTry.push('/api/info');
+    // Skip localhost network requests when running offline or on cloud host to keep app startup blazing fast
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (!isLocalhost) {
+      return;
     }
-    endpointsToTry.push('http://localhost:5000/api/info');
-    endpointsToTry.push('http://127.0.0.1:5000/api/info');
-    endpointsToTry.push('http://localhost:8080/api/info');
 
+    const endpointsToTry = ['/api/info'];
     let activeBase = null;
     let foundInfo = null;
 
     for (const url of endpointsToTry) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 600);
+        const timeoutId = setTimeout(() => controller.abort(), 400);
         const res = await fetch(url, { signal: controller.signal });
         clearTimeout(timeoutId);
         if (res.ok) {

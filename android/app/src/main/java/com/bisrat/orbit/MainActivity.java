@@ -79,9 +79,15 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void openGoogleCalendar(final String title, final String description, final String location, final long startTimeMillis, final long endTimeMillis) {
+            openGoogleCalendar(title, description, location, startTimeMillis, endTimeMillis, "");
+        }
+
+        @JavascriptInterface
+        public void openGoogleCalendar(final String title, final String description, final String location, final long startTimeMillis, final long endTimeMillis, final String gcalUrl) {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    // Strategy 1: Standard CalendarContract.Events.CONTENT_URI intent
                     try {
                         Intent intent = new Intent(Intent.ACTION_INSERT)
                                 .setData(CalendarContract.Events.CONTENT_URI)
@@ -90,17 +96,36 @@ public class MainActivity extends Activity {
                                 .putExtra(CalendarContract.Events.EVENT_LOCATION, location)
                                 .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, startTimeMillis)
                                 .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, endTimeMillis);
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                         startActivity(intent);
-                    } catch (Exception e) {
-                        try {
-                            String url = "https://calendar.google.com/calendar/render?action=TEMPLATE&text="
-                                    + Uri.encode(title)
-                                    + "&details=" + Uri.encode(description)
-                                    + "&location=" + Uri.encode(location);
-                            Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                            startActivity(webIntent);
-                        } catch (Exception ignored) {}
-                    }
+                        return;
+                    } catch (Exception ignored) {}
+
+                    // Strategy 2: ACTION_EDIT with MIME vnd.android.cursor.item/event (supports OEM calendar apps)
+                    try {
+                        Intent editIntent = new Intent(Intent.ACTION_EDIT);
+                        editIntent.setType("vnd.android.cursor.item/event");
+                        editIntent.putExtra("title", title);
+                        editIntent.putExtra("description", description);
+                        editIntent.putExtra("eventLocation", location);
+                        editIntent.putExtra("beginTime", startTimeMillis);
+                        editIntent.putExtra("endTime", endTimeMillis);
+                        editIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(editIntent);
+                        return;
+                    } catch (Exception ignored) {}
+
+                    // Strategy 3: Direct Google Calendar web or app URL with full query parameters
+                    try {
+                        String targetUrl = (gcalUrl != null && !gcalUrl.trim().isEmpty()) ? gcalUrl :
+                                ("https://calendar.google.com/calendar/render?action=TEMPLATE&text="
+                                + Uri.encode(title)
+                                + "&details=" + Uri.encode(description)
+                                + "&location=" + Uri.encode(location));
+                        Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl));
+                        webIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(webIntent);
+                    } catch (Exception ignored) {}
                 }
             });
         }
@@ -142,6 +167,9 @@ public class MainActivity extends Activity {
 
         webView = new WebView(this);
         webView.setFitsSystemWindows(true);
+        if (Build.VERSION.SDK_INT >= 19) {
+            webView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null);
+        }
         setContentView(webView);
 
         WebSettings s = webView.getSettings();
@@ -154,8 +182,9 @@ public class MainActivity extends Activity {
             s.setAllowFileAccessFromFileURLs(true);
             s.setAllowUniversalAccessFromFileURLs(true);
         } catch (Exception ignored) {}
-        s.setLoadWithOverviewMode(true);
-        s.setUseWideViewPort(true);
+        s.setLoadWithOverviewMode(false);
+        s.setUseWideViewPort(false);
+        s.setRenderPriority(WebSettings.RenderPriority.HIGH);
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
 
         webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
@@ -179,11 +208,12 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                if (url.startsWith("file://") || url.contains("oasis-hugger-0vjp9.ship.place") || url.contains("gaudy-leech-4nbp1.ship.place")) {
+                if (url.startsWith("file://") || url.contains("ship.place")) {
                     return false;
                 }
                 try {
                     Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     startActivity(intent);
                     return true;
                 } catch (Exception e) {

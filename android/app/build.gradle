@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'com.orbit.tracker'
+    namespace 'com.bisrat.orbit'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.orbit.tracker"
+        applicationId "com.bisrat.orbit"
         minSdk 24
         targetSdk 34
         versionCode 1

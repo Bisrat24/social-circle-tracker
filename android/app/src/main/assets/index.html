@@ -2,14 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Orbit - Social Circle & Connection Tracker</title>
   
   <!-- PWA & Android Meta Tags -->
   <meta name="theme-color" content="#121622">
   <meta name="mobile-web-app-capable" content="yes">
+  <meta name="application-name" content="Orbit">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="format-detection" content="telephone=no">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -84,6 +86,26 @@
       <div class="banner-actions">
         <button id="btnInstallApp" class="btn btn-sm btn-primary">Install App</button>
         <button id="btnDismissInstall" class="dismiss-install-btn">&times;</button>
+      </div>
+    </div>
+
+    <!-- OFFLINE STATUS INDICATOR BANNER -->
+    <div id="offlineIndicatorBanner" class="offline-status-banner" style="display:none;">
+      <span>⚡ Offline Mode — Changes are saved locally on your device and will sync when reconnected.</span>
+    </div>
+
+    <!-- NOTIFICATION ACCESS PERMISSION BANNER -->
+    <div id="notificationPermissionBanner" class="notification-prompt-banner" style="display:none;">
+      <div class="banner-left">
+        <span class="bell-icon">🔔</span>
+        <div class="install-text">
+          <strong>Enable Callback Reminders</strong>
+          <span>Get notified when you promised to call a friend back so you never lose touch</span>
+        </div>
+      </div>
+      <div class="banner-actions">
+        <button id="btnGrantNotifications" class="btn btn-sm btn-primary">Enable Notifications</button>
+        <button id="btnDismissNotifications" class="dismiss-install-btn">&times;</button>
       </div>
     </div>
 
@@ -180,6 +202,20 @@
       </div>
     </section>
 
+    <!-- MOBILE QUICK ACTIONS: Direct 1-tap friend creation & calendar scheduling -->
+    <div class="mobile-quick-action-bar">
+      <button id="mobileActionAddFriend" class="btn btn-primary btn-action-pill">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        <span>Add Friend</span>
+      </button>
+      <button id="mobileActionCalendar" class="btn btn-secondary btn-action-pill">
+        <span>📅 Schedule Event</span>
+      </button>
+      <button id="mobileActionQuickLog" class="btn btn-ghost btn-action-pill">
+        <span>📞 Log Call</span>
+      </button>
+    </div>
+
     <!-- MAIN CONTACTS GRID -->
     <main class="contacts-main">
       <div id="contactsGrid" class="contacts-grid">
@@ -199,6 +235,7 @@
   <!-- MODAL: ADD / EDIT CONTACT -->
   <div id="contactModal" class="modal-backdrop" style="display:none;">
     <div class="modal-card">
+      <div class="modal-handle"></div>
       <div class="modal-header">
         <h3 id="contactModalTitle">Add New Friend</h3>
         <button class="modal-close-btn" data-close="contactModal">&times;</button>
@@ -292,6 +329,7 @@
   <!-- MODAL: LOG INTERACTION -->
   <div id="interactionModal" class="modal-backdrop" style="display:none;">
     <div class="modal-card">
+      <div class="modal-handle"></div>
       <div class="modal-header">
         <h3 id="interactionModalTitle">Log Connection</h3>
         <button class="modal-close-btn" data-close="interactionModal">&times;</button>
@@ -409,6 +447,7 @@
   <!-- MODAL: AWKWARDNESS-BUSTER ICEBREAKER GENERATOR -->
   <div id="icebreakerModal" class="modal-backdrop" style="display:none;">
     <div class="modal-card modal-large">
+      <div class="modal-handle"></div>
       <div class="modal-header">
         <div class="header-with-badge">
           <h3>Awkwardness-Buster</h3>
@@ -446,6 +485,7 @@
   <!-- MODAL: CONTACT PROFILE & FULL HISTORY -->
   <div id="profileModal" class="modal-backdrop" style="display:none;">
     <div class="modal-card modal-large">
+      <div class="modal-handle"></div>
       <div class="modal-header">
         <div class="profile-header-info">
           <div class="profile-avatar" id="profAvatar">AM</div>
@@ -538,6 +578,7 @@
             <h4>Interaction Timeline</h4>
             <div class="timeline-actions">
               <button id="profLogInterBtn" class="btn btn-sm btn-primary">+ Log Contact</button>
+              <button id="profCalendarBtn" class="btn btn-sm btn-secondary">📅 Google Calendar</button>
               <button id="profIcebreakerBtn" class="btn btn-sm btn-secondary">⚡ Icebreaker</button>
               <button id="profEditBtn" class="btn btn-sm btn-ghost">✏️ Edit</button>
             </div>
@@ -554,6 +595,7 @@
   <!-- MODAL: DATA BACKUP / SETTINGS -->
   <div id="dataSettingsModal" class="modal-backdrop" style="display:none;">
     <div class="modal-card">
+      <div class="modal-handle"></div>
       <div class="modal-header">
         <h3>Settings & Data Management</h3>
         <button class="modal-close-btn" data-close="dataSettingsModal">&times;</button>
@@ -578,10 +620,20 @@
           </button>
         </div>
 
-        <div class="settings-group">
-          <h4>Audio & Notifications</h4>
-          <p class="text-sm">Enable sound cues and browser notifications for callbacks that are due.</p>
-          <button id="enableSoundBtn" class="btn btn-ghost">🔔 Test Chime Sound</button>
+        <div class="settings-group notification-settings-card">
+          <h4>Android & System Notifications</h4>
+          <p class="text-sm">Never forget to call friends back. Orbit fires background reminders when promised callbacks are due or friendships need water.</p>
+          
+          <div class="notification-status-row">
+            <span class="status-label">Notification Access:</span>
+            <span id="notifStatusBadge" class="notif-badge badge-pending">Checking...</span>
+          </div>
+
+          <div class="notification-action-buttons">
+            <button id="btnRequestNotifPermission" class="btn btn-secondary btn-sm">🔔 Request Notification Access</button>
+            <button id="btnSendTestNotification" class="btn btn-secondary btn-sm">⚡ Send Test Notification</button>
+            <button id="enableSoundBtn" class="btn btn-ghost btn-sm">🎵 Test Audio Chime</button>
+          </div>
         </div>
 
         <div class="settings-group danger-zone">
@@ -598,6 +650,7 @@
   <!-- MODAL: GOOGLE ACCOUNT SYNC -->
   <div id="googleSyncModal" class="modal-backdrop" style="display:none;">
     <div class="modal-card modal-large">
+      <div class="modal-handle"></div>
       <div class="modal-header">
         <div class="header-with-badge">
           <h3>Google Account Cloud Sync</h3>
@@ -612,29 +665,32 @@
           <div class="origin-warning-content">
             <span class="warn-icon">⚠️</span>
             <div>
-              <strong>You are running Orbit via local file mode (<code>file://</code>)</strong>
-              <p>Google OAuth strictly blocks <code>file://</code> URLs for security. To enable Google Sign-In and Android Sync, run Orbit via your local server.</p>
+              <strong>You are running Orbit in local file mode (<code>file://</code>)</strong>
+              <p>Google Identity & real-time network sync require the local web server. Run <strong>launch.bat</strong> or click below to open via HTTP.</p>
             </div>
           </div>
-          <a href="http://localhost:5000/" class="btn btn-sm btn-primary">🚀 Switch to http://localhost:5000</a>
+          <a href="http://localhost:5000/" class="btn btn-sm btn-primary">🚀 Switch to http://localhost:5000/</a>
         </div>
 
-        <!-- Connected Account Card (Shown when signed in) -->
+        <!-- Connected Google Account Card (Shown when signed in / linked) -->
         <div id="googleAccountProfileCard" class="google-profile-card" style="display:none;">
-          <img id="googleProfImg" src="" alt="Google Profile" class="google-profile-img">
+          <img id="googleProfImg" src="icons/icon-96.png" alt="Google Profile" class="google-profile-img">
           <div class="google-profile-info">
             <h4 id="googleProfName">Bisrat</h4>
             <span id="googleProfEmail">user@gmail.com</span>
             <span class="sync-active-badge">🟢 Google Account Active & Synced</span>
           </div>
-          <button id="btnGoogleDisconnect" class="btn btn-sm btn-ghost">Disconnect</button>
+          <div class="profile-card-actions">
+            <button id="btnSyncNowProfile" class="btn btn-sm btn-primary">🔄 Sync Now</button>
+            <button id="btnGoogleDisconnect" class="btn btn-sm btn-ghost">Disconnect</button>
+          </div>
         </div>
 
-        <!-- SYNC METHOD 1: GOOGLE ACCOUNT IDENTITY & DIRECT DRIVE BACKUP -->
-        <div class="sync-config-section">
+        <!-- SYNC METHOD 1: INSTANT GOOGLE ACCOUNT LINK (ZERO SETUP) -->
+        <div id="googleLinkSection" class="sync-config-section">
           <div class="section-badge-tag">Method 1 (Instant — Zero Setup)</div>
           <h4>Link Your Google Account</h4>
-          <p class="text-sm">Link your Google email address to enable personalized sync identity and 1-click Google Drive backup:</p>
+          <p class="text-sm">Link your Google email to activate seamless cross-device identity and cloud backup:</p>
           
           <div class="form-row mt-2">
             <div class="form-group flex-2">
@@ -642,16 +698,30 @@
               <input type="email" id="googleAccountEmailInput" placeholder="e.g. yourname@gmail.com">
             </div>
             <div class="form-group flex-1" style="justify-content: flex-end;">
-              <button id="btnLinkGoogleEmail" class="btn btn-primary w-full">Link Account</button>
+              <button id="btnLinkGoogleEmail" class="btn btn-primary w-full">⚡ Connect Google Account</button>
             </div>
           </div>
+        </div>
 
+        <!-- GOOGLE DRIVE 1-CLICK BACKUP & RESTORE -->
+        <div class="sync-config-section">
+          <div class="section-badge-tag">Cloud Backup & Restore</div>
+          <h4>Google Drive Cloud Backup & Restore</h4>
+          <p class="text-sm">Save your entire social circle, levels, and notes directly to Google Drive, or restore from a previous backup:</p>
+          
           <div class="sync-drive-actions mt-2">
             <button id="btnExportToGoogleDrive" class="btn btn-secondary">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               💾 Save Backup to Google Drive
             </button>
-            <button id="btnSyncNowGlobal" class="btn btn-secondary">🔄 Sync Now</button>
+            
+            <input type="file" id="googleDriveRestoreInput" accept=".json" style="display:none;">
+            <button id="btnRestoreFromGoogleDrive" class="btn btn-secondary">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              📥 Restore from Google Drive
+            </button>
+
+            <button id="btnSyncNowGlobal" class="btn btn-primary">🔄 Sync All Data</button>
           </div>
         </div>
 
@@ -659,19 +729,36 @@
         <div class="sync-config-section">
           <div class="section-badge-tag">Method 2 (Local Network)</div>
           <h4>Real-Time PC ⇄ Android Wi-Fi Sync</h4>
-          <p class="text-sm">When your PC and Android phone are on the same Wi-Fi network, Orbit syncs changes in real-time automatically.</p>
+          <p class="text-sm">When your PC and Android phone are on the same Wi-Fi network, changes sync between both devices instantly.</p>
           
           <div class="wifi-sync-status-row">
             <span id="wifiSyncIndicator" class="wifi-dot dot-active"></span>
-            <span id="wifiSyncStatusText">Local Server: <strong>http://localhost:5000/</strong> (Active)</span>
+            <span id="wifiSyncStatusText">Checking local server status...</span>
+          </div>
+
+          <div class="wifi-sync-details mt-2">
+            <div class="wifi-ip-badge highlight-badge" style="background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.4); padding: 12px; border-radius: 10px;">
+              <div style="font-weight: 700; color: #a5b4fc; margin-bottom: 6px;">🚀 Instant Android App Link (Bypasses Firewall & Router Isolation):</div>
+              <code id="androidHttpsUrl" style="font-size: 1.1rem; color: #38bdf8; word-break: break-all;">https://00193578f9cdd1.lhr.life</code>
+              <div class="mt-2">
+                <button type="button" id="btnCopyHttpsUrl" class="btn btn-xs btn-primary" onclick="navigator.clipboard.writeText('https://00193578f9cdd1.lhr.life'); alert('Copied mobile link to clipboard!');">📋 Copy Phone Link</button>
+              </div>
+            </div>
+            <div class="wifi-ip-badge mt-2" style="font-size: 0.85rem; opacity: 0.75; padding: 6px 10px;">
+              <span>📶 Local Wi-Fi Direct:</span>
+              <code id="androidWifiSyncUrl">http://192.168.1.6:5000/</code>
+            </div>
+          </div>
+
+          <div class="sync-action-row mt-2">
+            <button id="btnForceWifiSync" class="btn btn-secondary btn-sm">🔄 Sync Data Now</button>
           </div>
         </div>
 
-        <!-- SYNC METHOD 3: GOOGLE CLOUD OAUTH2 CLIENT ID -->
-        <div class="sync-config-section">
-          <div class="section-badge-tag">Method 3 (Advanced)</div>
-          <h4>Google Cloud OAuth 2.0 Client (Google Drive AppData)</h4>
-          <p class="text-sm">If you have a Google Cloud Developer OAuth Client ID, enter it below for official background Drive sync:</p>
+        <!-- SYNC METHOD 3: ADVANCED GOOGLE CLOUD OAUTH2 CLIENT -->
+        <details class="sync-config-section setup-guide-box">
+          <summary><strong>⚙️ Advanced: Automatic Google Drive AppData (OAuth 2.0 Client)</strong></summary>
+          <p class="text-sm mt-2">For developers or users with a Google Cloud Developer OAuth Client ID for automated background Drive sync:</p>
           
           <div class="form-group mt-2">
             <label for="googleClientIdInput">Google OAuth Client ID</label>
@@ -682,12 +769,12 @@
             <button id="btnSaveClientId" class="btn btn-secondary">Save Client ID</button>
             <button id="btnGoogleConnect" class="btn btn-primary btn-google-brand">
               <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#EA4335" d="M12 5c1.54 0 2.93.56 4.02 1.48l3.01-3.01C17.21 1.74 14.77 1 12 1 7.42 1 3.51 3.6 1.7 7.37l3.7 2.87C6.28 7.35 8.9 5 12 5z"/><path fill="#4285F4" d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58l3.7 2.87c2.16-1.99 3.72-4.94 3.72-8.69z"/><path fill="#FBBC05" d="M5.4 14.76c-.24-.72-.38-1.49-.38-2.26s.14-1.54.38-2.26L1.7 7.37C.62 9.53 0 11.96 0 14.5s.62 4.97 1.7 7.13l3.7-2.87z"/><path fill="#34A853" d="M12 23.5c3.24 0 5.95-1.08 7.93-2.91l-3.7-2.87c-1.08.72-2.45 1.16-4.23 1.16-3.1 0-5.72-2.35-6.6-5.24L1.7 16.5C3.51 20.27 7.42 23.5 12 23.5z"/></svg>
-              <span>Sign in & Sync with Google</span>
+              <span>Sign in with Google OAuth</span>
             </button>
           </div>
 
-          <details class="setup-guide-box">
-            <summary><strong>Google Client ID Setup Instructions</strong></summary>
+          <div class="mt-2">
+            <strong>Setup Steps:</strong>
             <ol class="guide-steps">
               <li>Open <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a>.</li>
               <li>Create a project, go to <strong>APIs & Services ➔ Credentials</strong>.</li>
@@ -695,10 +782,76 @@
               <li>Under <em>Authorized JavaScript origins</em>, add <code>http://localhost:5000</code>.</li>
               <li>Paste the Client ID above!</li>
             </ol>
-          </details>
-        </div>
+          </div>
+        </details>
 
       </div>
+  </div>
+
+  <!-- MODAL: SCHEDULE PROGRAM / GOOGLE CALENDAR -->
+  <div id="calendarModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <div class="header-icon-title">
+          <span class="modal-icon-badge">📅</span>
+          <div>
+            <h3>Schedule in Google Calendar</h3>
+            <p class="modal-subtitle">Set dates, calls & meetup programs with friends</p>
+          </div>
+        </div>
+        <button class="modal-close-btn" data-close="calendarModal">&times;</button>
+      </div>
+      <form id="calendarForm" class="modal-body">
+        <div class="form-group">
+          <label for="calFriendSelect">Friend *</label>
+          <select id="calFriendSelect" required></select>
+        </div>
+
+        <div class="form-group">
+          <label for="calEventTitle">Program / Event Title *</label>
+          <input type="text" id="calEventTitle" required placeholder="e.g. Catch up call, Coffee, Lunch, Project sync">
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="calDateTime">Date & Time *</label>
+            <input type="datetime-local" id="calDateTime" required>
+          </div>
+          <div class="form-group flex-1">
+            <label for="calDuration">Duration</label>
+            <select id="calDuration">
+              <option value="15">15 Minutes (Quick catch-up)</option>
+              <option value="30" selected>30 Minutes (Casual call)</option>
+              <option value="60">1 Hour (Deep conversation)</option>
+              <option value="90">1.5 Hours (Coffee / Lunch)</option>
+              <option value="120">2 Hours (Dinner / Hangout)</option>
+              <option value="240">Half Day (Trip / Program)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="calLocation">Location / Channel (Optional)</label>
+          <input type="text" id="calLocation" placeholder="e.g. Phone Call, Google Meet, Cafe, Downtown">
+        </div>
+
+        <div class="form-group">
+          <label for="calNotes">Agenda / Topics to Remember</label>
+          <textarea id="calNotes" rows="2" placeholder="Topics to discuss, life updates, catch-up reminders..."></textarea>
+        </div>
+
+        <div class="calendar-sync-notice">
+          <span>⚡ <strong>Direct Google Calendar Sync:</strong> Instantly opens in your Google Calendar app with date, time, and friend notes pre-filled!</span>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-close="calendarModal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitCalendarEvent">
+            <span>📅 Add to Google Calendar</span>
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -715,10 +868,11 @@
     </button>
     <button class="mobile-nav-item mobile-fab-item" id="mobileFabAdd" title="Add Contact">
       <div class="fab-circle">➕</div>
+      <span class="nav-label fab-label">Add Friend</span>
     </button>
-    <button class="mobile-nav-item" id="mobileNavSync">
-      <span class="nav-icon">🔄</span>
-      <span class="nav-label">Sync</span>
+    <button class="mobile-nav-item" data-nav="calendar" id="mobileNavCalendar">
+      <span class="nav-icon">📅</span>
+      <span class="nav-label">Calendar</span>
     </button>
     <button class="mobile-nav-item" data-nav="settings">
       <span class="nav-icon">⚙️</span>

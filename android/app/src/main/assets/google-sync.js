@@ -1,9 +1,10 @@
 /**
  * ORBIT - Google Account & Cross-Device Sync Engine
- * Provides multi-method synchronization across PC and Android:
- * 1. Real-time Local Wi-Fi Sync (/api/sync)
- * 2. Google Identity Services OAuth2 & Google Drive AppData (drive.appdata)
- * 3. Google Account Email Identity & Direct Google Drive Backup/Restore
+ * Provides comprehensive synchronization across PC and Android:
+ * 1. Instant Google Account Email Linking & Identity Profile
+ * 2. Real-time Local Wi-Fi Sync (/api/sync & /api/info)
+ * 3. 1-Click Direct Google Drive Cloud Backup & Restore
+ * 4. Official Google Cloud Identity Services OAuth 2.0 (Google Drive AppData)
  */
 
 const GOOGLE_SYNC_STORAGE_KEY = 'orbit_google_sync_config';
@@ -23,6 +24,7 @@ class GoogleSyncEngine {
     this.syncDebounceTimer = null;
     this.driveFileId = null;
     this.isLocalSyncActive = false;
+    this.serverInfo = null;
     this.syncMode = 'none'; // 'google_oauth' | 'wifi' | 'email_linked'
 
     this.loadConfig();
@@ -59,10 +61,10 @@ class GoogleSyncEngine {
   }
 
   initGoogleIdentity() {
-    // 1. Check for real-time Local Wi-Fi sync server
-    this.checkLocalSyncServer();
+    // 1. Check local server and sync
+    this.checkServerStatusAndSync();
 
-    // 2. Check if on file:// protocol
+    // 2. Check protocol origin (warn if file://)
     this.checkProtocolOrigin();
 
     // 3. Initialize Google Identity Services if available and on HTTP
@@ -76,7 +78,7 @@ class GoogleSyncEngine {
             error_callback: (err) => {
               console.error('Google OAuth Error:', err);
               this.setSyncStatus('error', 'Auth Failed');
-              this.app.showToast('Google Sign-in failed. Check Client ID origin.', 'error');
+              this.app.showToast('Google Sign-in failed. Please verify your Client ID and origin.', 'error');
             }
           });
         } catch (e) {
@@ -96,158 +98,180 @@ class GoogleSyncEngine {
     }
   }
 
-  async checkLocalSyncServer() {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500);
-      const res = await fetch('/api/sync', { signal: controller.signal });
-      clearTimeout(timeoutId);
+  // ========================================================================
+  // SERVER STATUS & LOCAL WI-FI REAL-TIME SYNC
+  // ========================================================================
 
-      if (res.ok) {
-        this.isLocalSyncActive = true;
-        const data = await res.json();
-        if (data && Array.isArray(data.contacts) && data.contacts.length > 0) {
-          // Merge local server data with browser contacts
-          const merged = this.mergeContacts(this.app.contacts, data.contacts);
-          this.app.contacts = merged;
-          this.app.saveContacts();
-          this.app.render();
+  async checkServerStatusAndSync() {
+    const endpointsToTry = [];
+    if (window.location.protocol.startsWith('http') && !window.location.hostname.includes('appassets')) {
+      endpointsToTry.push('/api/info');
+    }
+    endpointsToTry.push('http://localhost:5000/api/info');
+    endpointsToTry.push('http://127.0.0.1:5000/api/info');
+    endpointsToTry.push('http://localhost:8080/api/info');
+
+    let activeBase = null;
+    let foundInfo = null;
+
+    for (const url of endpointsToTry) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 600);
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          foundInfo = await res.json();
+          activeBase = url.replace('/api/info', '');
+          break;
         }
-        this.setSyncStatus('synced', 'Wi-Fi Synced');
+      } catch (err) {
+        // try next endpoint
       }
-    } catch (e) {
-      // Local server endpoint not reachable (e.g. running via file:// without host-mobile)
+    }
+
+    if (foundInfo) {
+      this.serverInfo = foundInfo;
+      this.isLocalSyncActive = true;
+      this.activeServerBase = activeBase || '';
+
+      const androidUrlElem = document.getElementById('androidWifiSyncUrl');
+      if (androidUrlElem && this.serverInfo.mobileUrl) {
+        androidUrlElem.textContent = this.serverInfo.mobileUrl;
+      }
+
+      const wifiIndicator = document.getElementById('wifiSyncIndicator');
+      const wifiStatusText = document.getElementById('wifiSyncStatusText');
+      if (wifiIndicator) wifiIndicator.className = 'wifi-dot dot-active';
+      if (wifiStatusText) {
+        wifiStatusText.innerHTML = `Local Server: <strong>${this.serverInfo.pcUrl || 'Active'}</strong> (Active 🟢)`;
+      }
+
+      try {
+        const syncUrl = `${this.activeServerBase}/api/sync`;
+        const syncRes = await fetch(syncUrl);
+        if (syncRes.ok) {
+          const syncData = await syncRes.json();
+          if (syncData && Array.isArray(syncData.contacts) && syncData.contacts.length > 0) {
+            const merged = this.mergeContacts(this.app.contacts, syncData.contacts);
+            this.app.contacts = merged;
+            this.app.saveContacts();
+            this.app.render();
+          } else if (this.app.contacts && this.app.contacts.length > 0) {
+            await this.pushToLocalSyncServer();
+          }
+        }
+      } catch (syncErr) {
+        console.warn('Sync fetch note:', syncErr);
+      }
+
+      this.setSyncStatus('synced', this.userProfile ? `${this.userProfile.name} (Active)` : 'Wi-Fi Synced');
+    } else {
       this.isLocalSyncActive = false;
-    }
-  }
-
-  requestGoogleSignIn() {
-    // Check if running on file:// protocol
-    if (window.location.protocol === 'file:') {
-      this.app.showToast('Google Sign-In requires http://localhost:5000. Switch to HTTP mode below.', 'warning');
-      this.openConfigModal();
-      return;
-    }
-
-    const input = document.getElementById('googleClientIdInput');
-    const clientId = input ? input.value.trim() : this.clientId;
-
-    if (!clientId) {
-      this.app.showToast('Please enter your Google OAuth Client ID first, or link your Google Email below.', 'info');
-      this.openConfigModal();
-      if (input) {
-        input.focus();
-        input.style.borderColor = 'var(--accent-rose)';
-        setTimeout(() => input.style.borderColor = '', 2000);
+      this.activeServerBase = '';
+      const wifiIndicator = document.getElementById('wifiSyncIndicator');
+      const wifiStatusText = document.getElementById('wifiSyncStatusText');
+      if (wifiIndicator) wifiIndicator.className = 'wifi-dot dot-offline';
+      if (wifiStatusText) {
+        wifiStatusText.innerHTML = `Local Server Offline. Run <strong>host-mobile.bat</strong> for cross-device Wi-Fi sync.`;
       }
-      return;
-    }
-
-    this.clientId = clientId;
-    this.saveConfig();
-
-    if (!this.tokenClient && window.google && window.google.accounts) {
-      this.initGoogleIdentity();
-    }
-
-    if (this.tokenClient) {
-      this.setSyncStatus('syncing', 'Signing in...');
-      this.tokenClient.requestAccessToken({ prompt: '' });
-    } else {
-      this.app.showToast('Google Identity library is loading. Please try again in 3 seconds.', 'info');
     }
   }
 
-  async handleTokenResponse(tokenResponse) {
-    if (tokenResponse && tokenResponse.access_token) {
-      this.accessToken = tokenResponse.access_token;
-      this.tokenExpiresAt = Date.now() + (tokenResponse.expires_in || 3599) * 1000;
-      this.syncMode = 'google_oauth';
-
-      await this.fetchUserProfile();
-      this.app.showToast(`Signed in to Google as ${this.userProfile?.name || 'Google User'}!`, 'success');
-      this.app.playChime('success');
-
-      // Immediate full two-way cloud sync
-      await this.performTwoWaySync();
-    } else {
-      this.setSyncStatus('error', 'Sign-in Denied');
-    }
-  }
-
-  async fetchUserProfile() {
-    if (!this.accessToken) return;
+  async pushToLocalSyncServer() {
+    if (!this.isLocalSyncActive) return;
     try {
-      const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-        headers: { Authorization: `Bearer ${this.accessToken}` }
+      const syncUrl = `${this.activeServerBase || ''}/api/sync`;
+      await fetch(syncUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lastUpdated: new Date().toISOString(),
+          user: this.userProfile ? this.userProfile.email : 'local',
+          contacts: this.app.contacts
+        })
       });
-      if (res.ok) {
-        const data = await res.json();
-        this.userProfile = {
-          name: data.name,
-          email: data.email,
-          picture: data.picture
-        };
-        this.saveConfig();
-        this.updateSyncUI();
-      }
     } catch (e) {
-      console.warn('Could not fetch user profile:', e);
+      console.warn('Local sync push note:', e);
     }
   }
 
   // ========================================================================
-  // GOOGLE ACCOUNT EMAIL PROFILE LINKING
+  // GOOGLE ACCOUNT EMAIL PROFILE LINKING (ZERO DEVELOPER SETUP)
   // ========================================================================
 
-  linkGoogleEmail(email, name = null) {
+  async linkGoogleEmail(email, name = null) {
     if (!email || !email.includes('@')) {
       this.app.showToast('Please enter a valid Google email address.', 'error');
+      const input = document.getElementById('googleAccountEmailInput');
+      if (input) input.focus();
       return;
     }
 
-    const userName = name || email.split('@')[0];
+    const cleanEmail = email.trim().toLowerCase();
+    const userName = name || cleanEmail.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
     this.userProfile = {
       name: userName,
-      email: email,
-      picture: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(email)}`
+      email: cleanEmail,
+      picture: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(cleanEmail)}`
     };
     this.syncMode = 'email_linked';
     this.lastSyncTime = new Date();
     this.saveConfig();
-    this.setSyncStatus('synced', `Linked: ${email}`);
-    this.app.showToast(`Linked to Google Account: ${email}`, 'success');
+
+    // Push state to local server if active
+    if (this.isLocalSyncActive) {
+      await this.pushToLocalSyncServer();
+    }
+
+    this.setSyncStatus('synced', `${userName} (Synced)`);
+    this.app.showToast(`✅ Linked to Google Account: ${cleanEmail}! Circle synced.`, 'success');
     this.app.playChime('success');
     this.openConfigModal();
   }
 
   // ========================================================================
-  // TWO-WAY CLOUD SYNC LOGIC
+  // TWO-WAY CLOUD & DEVICE SYNC
   // ========================================================================
 
   async performTwoWaySync() {
-    // 1. If Local Wi-Fi Sync is active, sync with local PC server
+    this.setSyncStatus('syncing', 'Syncing...');
+
+    let syncedChannels = [];
+
+    // 1. Sync with Local PC Server (/api/sync)
     if (this.isLocalSyncActive) {
-      await this.pushToLocalSyncServer();
+      try {
+        await this.pushToLocalSyncServer();
+        const res = await fetch('/api/sync');
+        if (res.ok) {
+          const remote = await res.json();
+          if (remote && Array.isArray(remote.contacts)) {
+            const merged = this.mergeContacts(this.app.contacts, remote.contacts);
+            this.app.contacts = merged;
+            this.app.saveContacts();
+            this.app.render();
+          }
+        }
+        syncedChannels.push('Local Wi-Fi');
+      } catch (err) {
+        console.warn('Local sync warning:', err);
+      }
     }
 
-    // 2. If Google OAuth is connected, sync with Google Drive AppData
+    // 2. Sync with Google Drive AppData (OAuth 2.0)
     if (this.accessToken && Date.now() < this.tokenExpiresAt) {
-      this.setSyncStatus('syncing', 'Syncing to Drive...');
-
       try {
         const file = await this.findSyncFile();
-
         if (file) {
           this.driveFileId = file.id;
           const remoteData = await this.downloadSyncFile(file.id);
-
           if (remoteData && Array.isArray(remoteData.contacts)) {
             const merged = this.mergeContacts(this.app.contacts, remoteData.contacts);
             this.app.contacts = merged;
             this.app.saveContacts();
             this.app.render();
-
             await this.uploadSyncFile(file.id, {
               version: 2,
               lastUpdated: new Date().toISOString(),
@@ -264,56 +288,37 @@ class GoogleSyncEngine {
           });
           this.driveFileId = newFileId;
         }
-
-        this.lastSyncTime = new Date();
-        this.saveConfig();
-        this.setSyncStatus('synced', 'Synced to Google');
-        this.app.showToast('Google Drive AppData sync complete!', 'success');
-        return;
+        syncedChannels.push('Google Drive Cloud');
       } catch (err) {
-        console.error('Google Drive Sync error:', err);
-        this.setSyncStatus('error', 'Drive Sync Error');
+        console.error('Google Drive sync error:', err);
       }
     }
 
-    if (this.isLocalSyncActive) {
-      this.lastSyncTime = new Date();
-      this.saveConfig();
-      this.setSyncStatus('synced', 'Wi-Fi Synced');
-      this.app.showToast('Local Wi-Fi sync complete!', 'success');
+    this.lastSyncTime = new Date();
+    this.saveConfig();
+
+    if (syncedChannels.length > 0) {
+      const label = this.userProfile ? `${this.userProfile.name} (Synced)` : 'Synced';
+      this.setSyncStatus('synced', label);
+      this.app.showToast(`Sync complete! (${syncedChannels.join(' & ')})`, 'success');
+      this.app.playChime('success');
     } else if (this.userProfile) {
-      this.lastSyncTime = new Date();
-      this.saveConfig();
-      this.setSyncStatus('synced', 'Account Synced');
+      this.setSyncStatus('synced', `${this.userProfile.name} (Active)`);
       this.app.showToast('Account data up to date!', 'info');
     } else {
+      this.setSyncStatus('disconnected', 'Sync with Google');
       this.openConfigModal();
-    }
-  }
-
-  async pushToLocalSyncServer() {
-    try {
-      await fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lastUpdated: new Date().toISOString(),
-          contacts: this.app.contacts
-        })
-      });
-    } catch (e) {
-      console.warn('Local sync push failed:', e);
     }
   }
 
   mergeContacts(localContacts, remoteContacts) {
     const contactMap = new Map();
 
-    remoteContacts.forEach(rc => {
+    (remoteContacts || []).forEach(rc => {
       contactMap.set(rc.id, rc);
     });
 
-    localContacts.forEach(lc => {
+    (localContacts || []).forEach(lc => {
       if (!contactMap.has(lc.id)) {
         contactMap.set(lc.id, lc);
       } else {
@@ -340,7 +345,171 @@ class GoogleSyncEngine {
     return Array.from(contactMap.values());
   }
 
-  // Google Drive REST API calls
+  scheduleAutoSync() {
+    clearTimeout(this.syncDebounceTimer);
+    this.syncDebounceTimer = setTimeout(() => {
+      if (this.isLocalSyncActive) {
+        this.pushToLocalSyncServer();
+      }
+      if (this.accessToken) {
+        this.performTwoWaySync();
+      }
+    }, 1500);
+  }
+
+  // ========================================================================
+  // GOOGLE DRIVE 1-CLICK DIRECT BACKUP & RESTORE
+  // ========================================================================
+
+  exportDirectGoogleDrive() {
+    const backupPayload = {
+      app: 'Orbit Social Circle Tracker',
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      account: this.userProfile ? this.userProfile.email : 'local',
+      contactsCount: this.app.contacts.length,
+      contacts: this.app.contacts
+    };
+
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupPayload, null, 2));
+    const filename = `orbit_google_drive_backup_${new Date().toISOString().slice(0, 10)}.json`;
+
+    const dlAnchor = document.createElement('a');
+    dlAnchor.setAttribute('href', dataStr);
+    dlAnchor.setAttribute('download', filename);
+    document.body.appendChild(dlAnchor);
+    dlAnchor.click();
+    dlAnchor.remove();
+
+    this.app.showToast('✅ Backup downloaded! Opening Google Drive in new tab...', 'success');
+    this.app.playChime('success');
+
+    setTimeout(() => {
+      window.open('https://drive.google.com/drive/my-drive', '_blank');
+    }, 700);
+  }
+
+  restoreGoogleDriveBackup(file) {
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = JSON.parse(e.target.result);
+        const contactsToImport = Array.isArray(parsed) ? parsed : (parsed.contacts && Array.isArray(parsed.contacts) ? parsed.contacts : null);
+
+        if (!contactsToImport) {
+          throw new Error('File does not contain a valid contacts array.');
+        }
+
+        const merged = this.mergeContacts(this.app.contacts, contactsToImport);
+        this.app.contacts = merged;
+        this.app.saveContacts();
+        this.app.render();
+
+        if (this.isLocalSyncActive) {
+          this.pushToLocalSyncServer();
+        }
+
+        this.app.showToast(`🎉 Restored ${contactsToImport.length} contacts from Google Drive backup!`, 'success');
+        this.app.playChime('success');
+
+        const modal = document.getElementById('googleSyncModal');
+        if (modal) modal.style.display = 'none';
+      } catch (err) {
+        console.error('Failed to parse backup:', err);
+        this.app.showToast('Invalid backup file. Please select a valid Orbit JSON file.', 'error');
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  // ========================================================================
+  // GOOGLE CLOUD OAUTH 2.0 (GOOGLE DRIVE APPDATA)
+  // ========================================================================
+
+  requestGoogleSignIn() {
+    if (window.location.protocol === 'file:') {
+      this.app.showToast('Google OAuth requires http://localhost:5000. Switch to HTTP mode below.', 'warning');
+      this.openConfigModal();
+      return;
+    }
+
+    const input = document.getElementById('googleClientIdInput');
+    const clientId = input ? input.value.trim() : this.clientId;
+
+    if (!clientId) {
+      // Check if user has entered an email in the email box
+      const emailInput = document.getElementById('googleAccountEmailInput');
+      const emailVal = emailInput ? emailInput.value.trim() : '';
+
+      if (emailVal && emailVal.includes('@')) {
+        this.linkGoogleEmail(emailVal);
+        return;
+      }
+
+      this.app.showToast('Tip: Enter your Google Email above for instant 1-click sync, or enter an OAuth Client ID below.', 'info');
+      this.openConfigModal();
+      if (input) {
+        input.focus();
+        input.style.borderColor = 'var(--accent-purple)';
+        setTimeout(() => input.style.borderColor = '', 2000);
+      }
+      return;
+    }
+
+    this.clientId = clientId;
+    this.saveConfig();
+
+    if (!this.tokenClient && window.google && window.google.accounts) {
+      this.initGoogleIdentity();
+    }
+
+    if (this.tokenClient) {
+      this.setSyncStatus('syncing', 'Signing in...');
+      this.tokenClient.requestAccessToken({ prompt: '' });
+    } else {
+      this.app.showToast('Google Identity library is initializing. Please try again in 2 seconds.', 'info');
+    }
+  }
+
+  async handleTokenResponse(tokenResponse) {
+    if (tokenResponse && tokenResponse.access_token) {
+      this.accessToken = tokenResponse.access_token;
+      this.tokenExpiresAt = Date.now() + (tokenResponse.expires_in || 3599) * 1000;
+      this.syncMode = 'google_oauth';
+
+      await this.fetchUserProfile();
+      this.app.showToast(`Signed in to Google as ${this.userProfile?.name || 'Google User'}!`, 'success');
+      this.app.playChime('success');
+
+      await this.performTwoWaySync();
+    } else {
+      this.setSyncStatus('error', 'Sign-in Cancelled');
+    }
+  }
+
+  async fetchUserProfile() {
+    if (!this.accessToken) return;
+    try {
+      const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: `Bearer ${this.accessToken}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        this.userProfile = {
+          name: data.name,
+          email: data.email,
+          picture: data.picture
+        };
+        this.saveConfig();
+        this.updateSyncUI();
+      }
+    } catch (e) {
+      console.warn('Could not fetch user profile:', e);
+    }
+  }
+
   async findSyncFile() {
     const query = encodeURIComponent(`name = '${SYNC_FILE_NAME}' and trashed = false`);
     const url = `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=${query}&fields=files(id,name,modifiedTime)`;
@@ -392,39 +561,8 @@ class GoogleSyncEngine {
       },
       body: JSON.stringify(content, null, 2)
     });
-    if (!res.ok) throw new Error(`Drive upload update failed: ${res.statusText}`);
+    if (!res.ok) throw new Error(`Drive upload failed: ${res.statusText}`);
     return true;
-  }
-
-  scheduleAutoSync() {
-    clearTimeout(this.syncDebounceTimer);
-    this.syncDebounceTimer = setTimeout(() => {
-      if (this.isLocalSyncActive) {
-        this.pushToLocalSyncServer();
-      }
-      if (this.accessToken) {
-        this.performTwoWaySync();
-      }
-    }, 1500);
-  }
-
-  // ========================================================================
-  // GOOGLE DRIVE DIRECT WEB BACKUP & RESTORE
-  // ========================================================================
-
-  exportDirectGoogleDrive() {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(this.app.contacts, null, 2));
-    const dlAnchor = document.createElement('a');
-    dlAnchor.setAttribute('href', dataStr);
-    dlAnchor.setAttribute('download', `orbit_google_drive_backup_${new Date().toISOString().slice(0, 10)}.json`);
-    document.body.appendChild(dlAnchor);
-    dlAnchor.click();
-    dlAnchor.remove();
-
-    this.app.showToast('Backup downloaded! Opening Google Drive in new tab...', 'success');
-    setTimeout(() => {
-      window.open('https://drive.google.com/drive/my-drive', '_blank');
-    }, 800);
   }
 
   // ========================================================================
@@ -448,10 +586,10 @@ class GoogleSyncEngine {
     if (this.userProfile || this.isLocalSyncActive) {
       pill.classList.add('connected');
       dot.className = `sync-dot dot-${this.syncStatus === 'error' ? 'error' : 'synced'}`;
-      
+
       const timeStr = this.lastSyncTime ? this.getRelativeTime(this.lastSyncTime) : 'Active';
       text.textContent = customLabel || (this.userProfile ? `${this.userProfile.name} (${timeStr})` : `Wi-Fi Synced`);
-      
+
       if (avatar) {
         avatar.src = this.userProfile?.picture || 'icons/icon-96.png';
         avatar.style.display = 'inline-block';
@@ -497,18 +635,25 @@ class GoogleSyncEngine {
     }
 
     const profileCard = document.getElementById('googleAccountProfileCard');
+    const linkSection = document.getElementById('googleLinkSection');
+
     if (this.userProfile) {
-      profileCard.style.display = 'flex';
-      document.getElementById('googleProfName').textContent = this.userProfile.name;
-      document.getElementById('googleProfEmail').textContent = this.userProfile.email;
-      if (this.userProfile.picture) {
-        document.getElementById('googleProfImg').src = this.userProfile.picture;
+      if (profileCard) {
+        profileCard.style.display = 'flex';
+        document.getElementById('googleProfName').textContent = this.userProfile.name;
+        document.getElementById('googleProfEmail').textContent = this.userProfile.email;
+        if (this.userProfile.picture) {
+          document.getElementById('googleProfImg').src = this.userProfile.picture;
+        }
       }
-      document.getElementById('btnGoogleDisconnect').style.display = 'inline-flex';
+      if (linkSection) linkSection.style.display = 'none';
     } else {
-      profileCard.style.display = 'none';
-      document.getElementById('btnGoogleDisconnect').style.display = 'none';
+      if (profileCard) profileCard.style.display = 'none';
+      if (linkSection) linkSection.style.display = 'block';
     }
+
+    // Refresh server info
+    this.checkServerStatusAndSync();
 
     modal.style.display = 'flex';
   }
@@ -522,8 +667,46 @@ class GoogleSyncEngine {
     this.saveConfig();
     this.setSyncStatus('disconnected', 'Disconnected');
     this.app.showToast('Disconnected from Google Account.', 'info');
-    const modal = document.getElementById('googleSyncModal');
-    if (modal) modal.style.display = 'none';
+    this.openConfigModal();
+  }
+
+  async createGoogleCalendarEvent(eventData) {
+    if (!this.accessToken) {
+      return false;
+    }
+
+    try {
+      const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          summary: eventData.title,
+          description: eventData.description,
+          location: eventData.location,
+          start: {
+            dateTime: new Date(eventData.startTime).toISOString()
+          },
+          end: {
+            dateTime: new Date(eventData.endTime).toISOString()
+          },
+          reminders: {
+            useDefault: true
+          }
+        })
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        console.log('Google Calendar API created event:', json);
+        return true;
+      }
+    } catch (e) {
+      console.warn('Google Calendar API error:', e);
+    }
+    return false;
   }
 }
 

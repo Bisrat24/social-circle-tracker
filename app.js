@@ -844,8 +844,11 @@ class SocialCircleApp {
           <button class="btn btn-sm btn-primary btn-call-promised" data-id="${contact.id}">
             📞 Call & Keep Promise
           </button>
-          <button class="btn btn-sm btn-secondary btn-icebreaker-quick" data-id="${contact.id}">
-            ⚡ Beat Awkwardness
+          <button class="btn btn-sm btn-secondary btn-calendar-sync" data-id="${contact.id}" title="Set date in Google Calendar">
+            📅 Google Calendar
+          </button>
+          <button class="btn btn-sm btn-ghost btn-icebreaker-quick" data-id="${contact.id}">
+            ⚡ Icebreaker
           </button>
         </div>
       `;
@@ -953,6 +956,7 @@ class SocialCircleApp {
 
       const card = document.createElement('div');
       card.className = 'contact-card';
+      card.dataset.id = contact.id;
       card.innerHTML = `
         <!-- Top row -->
         <div class="contact-header">
@@ -1021,11 +1025,11 @@ class SocialCircleApp {
           <button class="btn-card-action btn-card-call btn-quick-log" data-id="${contact.id}">
             📞 Log Contact
           </button>
-          <button class="btn-card-action btn-card-icebreaker btn-open-icebreaker" data-id="${contact.id}" title="Awkwardness-Busting Reconnect Scripts">
-            ⚡ Icebreaker
+          <button class="btn-card-action btn-card-calendar btn-open-calendar" data-id="${contact.id}" title="Set date in Google Calendar">
+            📅 Calendar
           </button>
           <button class="btn-card-action btn-view-profile" data-id="${contact.id}">
-            👤 History
+            👤 Profile
           </button>
         </div>
       `;
@@ -1574,6 +1578,129 @@ class SocialCircleApp {
   }
 
   // ========================================================================
+  // GOOGLE CALENDAR SCHEDULER & PROGRAM ENGINE
+  // ========================================================================
+
+  openCalendarModal(contactId = null, defaultTitle = '', defaultDate = null, defaultNotes = '') {
+    const modal = document.getElementById('calendarModal');
+    const friendSelect = document.getElementById('calFriendSelect');
+    const titleInput = document.getElementById('calEventTitle');
+    const dateInput = document.getElementById('calDateTime');
+    const locationInput = document.getElementById('calLocation');
+    const notesInput = document.getElementById('calNotes');
+
+    if (!modal) return;
+
+    friendSelect.innerHTML = '';
+    if (this.contacts.length === 0) {
+      this.showToast('Please add a friend first before scheduling a program!', 'warning');
+      this.openAddEditContactModal();
+      return;
+    }
+
+    this.contacts.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      const tier = CIRCLE_LABELS[c.circle]?.label || 'Friend';
+      opt.textContent = `${c.name} (${c.nickname || tier})`;
+      friendSelect.appendChild(opt);
+    });
+
+    if (contactId) {
+      friendSelect.value = contactId;
+    }
+
+    const selectedContact = this.contacts.find(c => c.id === (contactId || friendSelect.value));
+    const friendName = selectedContact ? selectedContact.name : 'Friend';
+
+    titleInput.value = defaultTitle || `Catch up with ${friendName}`;
+
+    // Set date: tomorrow at 15:00 if not provided
+    let targetDate = defaultDate ? new Date(defaultDate) : new Date(Date.now() + 24 * 3600 * 1000);
+    if (isNaN(targetDate.getTime())) {
+      targetDate = new Date(Date.now() + 24 * 3600 * 1000);
+    }
+    const pad = n => String(n).padStart(2, '0');
+    dateInput.value = `${targetDate.getFullYear()}-${pad(targetDate.getMonth() + 1)}-${pad(targetDate.getDate())}T${pad(targetDate.getHours())}:${pad(targetDate.getMinutes())}`;
+
+    locationInput.value = (selectedContact && selectedContact.phone) ? `Phone (${selectedContact.phone})` : 'Phone Call / Meetup';
+    notesInput.value = defaultNotes || (selectedContact ? selectedContact.nextTopicsToAsk : '') || '';
+
+    friendSelect.onchange = () => {
+      const c = this.contacts.find(ct => ct.id === friendSelect.value);
+      if (c && !titleInput.value.includes(c.name)) {
+        titleInput.value = `Catch up with ${c.name}`;
+        if (c.nextTopicsToAsk && !notesInput.value) {
+          notesInput.value = c.nextTopicsToAsk;
+        }
+      }
+    };
+
+    modal.style.display = 'flex';
+  }
+
+  scheduleGoogleCalendarEvent({ contactId, title, dateTime, durationMinutes = 30, location = '', notes = '' }) {
+    const contact = this.contacts.find(c => c.id === contactId);
+    const startDate = new Date(dateTime);
+    if (isNaN(startDate.getTime())) {
+      this.showToast('Please specify a valid date and time.', 'warning');
+      return;
+    }
+
+    const durationMs = parseInt(durationMinutes, 10) * 60 * 1000;
+    const endDate = new Date(startDate.getTime() + durationMs);
+
+    const pad = n => String(n).padStart(2, '0');
+    const formatGCalDate = d => {
+      return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+    };
+
+    const startStr = formatGCalDate(startDate);
+    const endStr = formatGCalDate(endDate);
+
+    const fullDescription = `${notes ? notes + '\n\n' : ''}Scheduled via Orbit - Social Circle Tracker\nContact: ${contact ? contact.name : ''}${contact && contact.phone ? ' (' + contact.phone + ')' : ''}`;
+
+    // 1. Native Android App Intent
+    if (window.AndroidBridge && typeof window.AndroidBridge.openGoogleCalendar === 'function') {
+      try {
+        window.AndroidBridge.openGoogleCalendar(title, fullDescription, location, startDate.getTime(), endDate.getTime());
+      } catch (e) {
+        console.warn('AndroidBridge calendar error:', e);
+      }
+    } else {
+      // 2. Fallback to universal web Google Calendar URL
+      const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${startStr}/${endStr}&details=${encodeURIComponent(fullDescription)}&location=${encodeURIComponent(location)}`;
+      window.open(gcalUrl, '_blank');
+    }
+
+    // Direct Google Calendar API sync if OAuth token active
+    if (this.googleSync && this.googleSync.accessToken) {
+      this.googleSync.createGoogleCalendarEvent({
+        title,
+        description: fullDescription,
+        location,
+        startTime: startDate,
+        endTime: endDate
+      }).catch(e => console.warn('OAuth calendar sync note:', e));
+    }
+
+    // 3. Keep Orbit in sync: Record promised callback / program
+    if (contact) {
+      contact.promisedCall = {
+        isPromised: true,
+        deadline: startDate.toISOString(),
+        reason: title
+      };
+      this.saveContacts();
+      this.render();
+      this.showToast(`📅 Scheduled with ${contact.name}! Added to Google Calendar.`, 'success');
+      this.playChimeSound();
+    }
+
+    this.closeModal('calendarModal');
+  }
+
+  // ========================================================================
   // EVENT BINDINGS
   // ========================================================================
 
@@ -1583,6 +1710,43 @@ class SocialCircleApp {
     document.getElementById('emptyAddBtn').onclick = () => this.openAddEditContactModal();
     document.getElementById('quickLogBtn').onclick = () => this.openLogInteractionModal();
     document.getElementById('themeToggleBtn').onclick = () => this.toggleTheme();
+
+    // Mobile quick action bar
+    const mobileActionAdd = document.getElementById('mobileActionAddFriend');
+    if (mobileActionAdd) {
+      mobileActionAdd.onclick = () => this.openAddEditContactModal();
+    }
+    const mobileActionCal = document.getElementById('mobileActionCalendar');
+    if (mobileActionCal) {
+      mobileActionCal.onclick = () => this.openCalendarModal();
+    }
+    const mobileActionLog = document.getElementById('mobileActionQuickLog');
+    if (mobileActionLog) {
+      mobileActionLog.onclick = () => this.openLogInteractionModal();
+    }
+
+    // Profile modal calendar button
+    const profCalBtn = document.getElementById('profCalendarBtn');
+    if (profCalBtn) {
+      profCalBtn.onclick = () => {
+        this.openCalendarModal(this.activeProfileContactId);
+      };
+    }
+
+    // Calendar Form submission
+    const calForm = document.getElementById('calendarForm');
+    if (calForm) {
+      calForm.onsubmit = (e) => {
+        e.preventDefault();
+        const contactId = document.getElementById('calFriendSelect').value;
+        const title = document.getElementById('calEventTitle').value.trim();
+        const dateTime = document.getElementById('calDateTime').value;
+        const durationMinutes = document.getElementById('calDuration').value;
+        const location = document.getElementById('calLocation').value.trim();
+        const notes = document.getElementById('calNotes').value.trim();
+        this.scheduleGoogleCalendarEvent({ contactId, title, dateTime, durationMinutes, location, notes });
+      };
+    }
 
     // Settings modal
     const settingsBtn = document.getElementById('dataSettingsBtn');
@@ -1773,6 +1937,16 @@ class SocialCircleApp {
         return;
       }
 
+      // Schedule in Google Calendar
+      const calBtn = e.target.closest('.btn-card-calendar') || e.target.closest('.btn-calendar-sync');
+      if (calBtn) {
+        const contact = this.contacts.find(c => c.id === calBtn.dataset.id);
+        const reason = (contact && contact.promisedCall) ? contact.promisedCall.reason : '';
+        const deadline = (contact && contact.promisedCall) ? contact.promisedCall.deadline : null;
+        this.openCalendarModal(calBtn.dataset.id, reason ? `Promised Callback: ${contact.name}` : '', deadline, reason);
+        return;
+      }
+
       // Open Icebreaker
       const iceBtn = e.target.closest('.btn-open-icebreaker') || e.target.closest('.btn-icebreaker-quick');
       if (iceBtn) {
@@ -1795,6 +1969,13 @@ class SocialCircleApp {
           window.location.href = `tel:${contact.phone}`;
         }
         this.openLogInteractionModal(callPromisedBtn.dataset.id);
+        return;
+      }
+
+      // Tap on contact card itself to open full profile & history
+      const card = e.target.closest('.contact-card');
+      if (card && card.dataset.id && !e.target.closest('button') && !e.target.closest('input') && !e.target.closest('select') && !e.target.closest('a')) {
+        this.openProfileModal(card.dataset.id);
         return;
       }
     });
@@ -1947,11 +2128,18 @@ class SocialCircleApp {
           if (deck && deck.style.display !== 'none') {
             deck.scrollIntoView({ behavior: 'smooth' });
           }
+        } else if (navTarget === 'calendar') {
+          this.openCalendarModal();
         } else if (navTarget === 'settings') {
           document.getElementById('dataSettingsModal').style.display = 'flex';
         }
       };
     });
+
+    const mobileNavCalendar = document.getElementById('mobileNavCalendar');
+    if (mobileNavCalendar) {
+      mobileNavCalendar.onclick = () => this.openCalendarModal();
+    }
 
     const mobileFabAdd = document.getElementById('mobileFabAdd');
     if (mobileFabAdd) {

@@ -202,6 +202,20 @@
       </div>
     </section>
 
+    <!-- MOBILE QUICK ACTIONS: Direct 1-tap friend creation & calendar scheduling -->
+    <div class="mobile-quick-action-bar">
+      <button id="mobileActionAddFriend" class="btn btn-primary btn-action-pill">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        <span>Add Friend</span>
+      </button>
+      <button id="mobileActionCalendar" class="btn btn-secondary btn-action-pill">
+        <span>📅 Schedule Event</span>
+      </button>
+      <button id="mobileActionQuickLog" class="btn btn-ghost btn-action-pill">
+        <span>📞 Log Call</span>
+      </button>
+    </div>
+
     <!-- MAIN CONTACTS GRID -->
     <main class="contacts-main">
       <div id="contactsGrid" class="contacts-grid">
@@ -564,6 +578,7 @@
             <h4>Interaction Timeline</h4>
             <div class="timeline-actions">
               <button id="profLogInterBtn" class="btn btn-sm btn-primary">+ Log Contact</button>
+              <button id="profCalendarBtn" class="btn btn-sm btn-secondary">📅 Google Calendar</button>
               <button id="profIcebreakerBtn" class="btn btn-sm btn-secondary">⚡ Icebreaker</button>
               <button id="profEditBtn" class="btn btn-sm btn-ghost">✏️ Edit</button>
             </div>
@@ -773,6 +788,73 @@
       </div>
   </div>
 
+  <!-- MODAL: SCHEDULE PROGRAM / GOOGLE CALENDAR -->
+  <div id="calendarModal" class="modal-backdrop" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-handle"></div>
+      <div class="modal-header">
+        <div class="header-icon-title">
+          <span class="modal-icon-badge">📅</span>
+          <div>
+            <h3>Schedule in Google Calendar</h3>
+            <p class="modal-subtitle">Set dates, calls & meetup programs with friends</p>
+          </div>
+        </div>
+        <button class="modal-close-btn" data-close="calendarModal">&times;</button>
+      </div>
+      <form id="calendarForm" class="modal-body">
+        <div class="form-group">
+          <label for="calFriendSelect">Friend *</label>
+          <select id="calFriendSelect" required></select>
+        </div>
+
+        <div class="form-group">
+          <label for="calEventTitle">Program / Event Title *</label>
+          <input type="text" id="calEventTitle" required placeholder="e.g. Catch up call, Coffee, Lunch, Project sync">
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="calDateTime">Date & Time *</label>
+            <input type="datetime-local" id="calDateTime" required>
+          </div>
+          <div class="form-group flex-1">
+            <label for="calDuration">Duration</label>
+            <select id="calDuration">
+              <option value="15">15 Minutes (Quick catch-up)</option>
+              <option value="30" selected>30 Minutes (Casual call)</option>
+              <option value="60">1 Hour (Deep conversation)</option>
+              <option value="90">1.5 Hours (Coffee / Lunch)</option>
+              <option value="120">2 Hours (Dinner / Hangout)</option>
+              <option value="240">Half Day (Trip / Program)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="calLocation">Location / Channel (Optional)</label>
+          <input type="text" id="calLocation" placeholder="e.g. Phone Call, Google Meet, Cafe, Downtown">
+        </div>
+
+        <div class="form-group">
+          <label for="calNotes">Agenda / Topics to Remember</label>
+          <textarea id="calNotes" rows="2" placeholder="Topics to discuss, life updates, catch-up reminders..."></textarea>
+        </div>
+
+        <div class="calendar-sync-notice">
+          <span>⚡ <strong>Direct Google Calendar Sync:</strong> Instantly opens in your Google Calendar app with date, time, and friend notes pre-filled!</span>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" data-close="calendarModal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitCalendarEvent">
+            <span>📅 Add to Google Calendar</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- ANDROID MOBILE BOTTOM NAVIGATION BAR -->
   <nav class="mobile-bottom-nav">
     <button class="mobile-nav-item active" data-nav="circle">
@@ -786,10 +868,11 @@
     </button>
     <button class="mobile-nav-item mobile-fab-item" id="mobileFabAdd" title="Add Contact">
       <div class="fab-circle">➕</div>
+      <span class="nav-label fab-label">Add Friend</span>
     </button>
-    <button class="mobile-nav-item" id="mobileNavSync">
-      <span class="nav-icon">🔄</span>
-      <span class="nav-label">Sync</span>
+    <button class="mobile-nav-item" data-nav="calendar" id="mobileNavCalendar">
+      <span class="nav-icon">📅</span>
+      <span class="nav-label">Calendar</span>
     </button>
     <button class="mobile-nav-item" data-nav="settings">
       <span class="nav-icon">⚙️</span>

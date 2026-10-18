@@ -669,6 +669,45 @@ class GoogleSyncEngine {
     this.app.showToast('Disconnected from Google Account.', 'info');
     this.openConfigModal();
   }
+
+  async createGoogleCalendarEvent(eventData) {
+    if (!this.accessToken) {
+      return false;
+    }
+
+    try {
+      const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          summary: eventData.title,
+          description: eventData.description,
+          location: eventData.location,
+          start: {
+            dateTime: new Date(eventData.startTime).toISOString()
+          },
+          end: {
+            dateTime: new Date(eventData.endTime).toISOString()
+          },
+          reminders: {
+            useDefault: true
+          }
+        })
+      });
+
+      if (res.ok) {
+        const json = await res.json();
+        console.log('Google Calendar API created event:', json);
+        return true;
+      }
+    } catch (e) {
+      console.warn('Google Calendar API error:', e);
+    }
+    return false;
+  }
 }
 
 window.GoogleSyncEngine = GoogleSyncEngine;

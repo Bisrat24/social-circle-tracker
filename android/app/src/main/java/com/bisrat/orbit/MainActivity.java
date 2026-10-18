@@ -16,6 +16,7 @@ import android.provider.CalendarContract;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -78,12 +79,9 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void openGoogleCalendar(final String title, final String description, final String location, final long startTimeMillis, final long endTimeMillis) {
-            openGoogleCalendar(title, description, location, startTimeMillis, endTimeMillis, "");
-        }
-
-        @JavascriptInterface
-        public void openGoogleCalendar(final String title, final String description, final String location, final long startTimeMillis, final long endTimeMillis, final String gcalUrl) {
+        public void openGoogleCalendar(final String title, final String description, final String location, final double startTimeMs, final double endTimeMs, final String gcalUrl) {
+            final long start = (long) startTimeMs;
+            final long end = (long) endTimeMs;
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
@@ -94,8 +92,8 @@ public class MainActivity extends Activity {
                                 .putExtra(CalendarContract.Events.TITLE, title)
                                 .putExtra(CalendarContract.Events.DESCRIPTION, description)
                                 .putExtra(CalendarContract.Events.EVENT_LOCATION, location)
-                                .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, startTimeMillis)
-                                .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, endTimeMillis);
+                                .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, start)
+                                .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, end);
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                         startActivity(intent);
                         return;
@@ -108,8 +106,8 @@ public class MainActivity extends Activity {
                         editIntent.putExtra("title", title);
                         editIntent.putExtra("description", description);
                         editIntent.putExtra("eventLocation", location);
-                        editIntent.putExtra("beginTime", startTimeMillis);
-                        editIntent.putExtra("endTime", endTimeMillis);
+                        editIntent.putExtra("beginTime", start);
+                        editIntent.putExtra("endTime", end);
                         editIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                         startActivity(editIntent);
                         return;
@@ -128,6 +126,21 @@ public class MainActivity extends Activity {
                     } catch (Exception ignored) {}
                 }
             });
+        }
+
+        @JavascriptInterface
+        public void openGoogleCalendar(final String title, final String description, final String location, final double startTimeMs, final double endTimeMs) {
+            openGoogleCalendar(title, description, location, startTimeMs, endTimeMs, "");
+        }
+
+        @JavascriptInterface
+        public void openGoogleCalendar(final String title, final String description, final String location, final long startTimeMs, final long endTimeMs, final String gcalUrl) {
+            openGoogleCalendar(title, description, location, (double) startTimeMs, (double) endTimeMs, gcalUrl);
+        }
+
+        @JavascriptInterface
+        public void openGoogleCalendar(final String title, final String description, final String location, final long startTimeMs, final long endTimeMs) {
+            openGoogleCalendar(title, description, location, (double) startTimeMs, (double) endTimeMs, "");
         }
 
         @JavascriptInterface
@@ -207,8 +220,20 @@ public class MainActivity extends Activity {
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (request != null && request.getUrl() != null) {
+                    return handleExternalUrl(request.getUrl().toString());
+                }
+                return false;
+            }
+
+            @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                if (url.startsWith("file://") || url.contains("ship.place")) {
+                return handleExternalUrl(url);
+            }
+
+            private boolean handleExternalUrl(String url) {
+                if (url == null || url.startsWith("file://") || url.contains("ship.place")) {
                     return false;
                 }
                 try {

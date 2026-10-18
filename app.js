@@ -52,6 +52,17 @@ const SAMPLE_CONTACTS = [
       deadline: new Date(Date.now() - 36 * 3600 * 1000).toISOString(), // overdue by 36 hours
       reason: 'I said "I will call you back this afternoon" on Tuesday and completely forgot!'
     },
+    programs: [
+      {
+        id: 'prog_c1_1',
+        title: 'Callback Marc & ask about golden retriever puppy',
+        dateTime: new Date(Date.now() + 2 * 3600 * 1000).toISOString(),
+        durationMinutes: 30,
+        location: 'Phone (+1 555-0144)',
+        notes: 'Marc called earlier. Remember to ask how his new puppy is settling in!',
+        completed: false
+      }
+    ],
     interactions: [
       {
         id: 'i1_1',
@@ -87,6 +98,17 @@ const SAMPLE_CONTACTS = [
     notes: 'Go-to person for life advice, book recommendations, and venting.',
     nextTopicsToAsk: 'Did she hear back from the grant committee?',
     promisedCall: null,
+    programs: [
+      {
+        id: 'prog_c2_1',
+        title: 'Coffee catch-up at Blue Bottle Cafe',
+        dateTime: new Date(Date.now() + 36 * 3600 * 1000).toISOString(),
+        durationMinutes: 60,
+        location: 'Blue Bottle Cafe, Downtown',
+        notes: 'Celebrate grant announcement and discuss upcoming book club reading',
+        completed: false
+      }
+    ],
     interactions: [
       {
         id: 'i2_1',
@@ -227,6 +249,13 @@ class SocialCircleApp {
       console.error('Failed to load contacts from localStorage:', e);
       this.contacts = JSON.parse(JSON.stringify(SAMPLE_CONTACTS));
     }
+
+    // Ensure every contact has a valid programs array
+    this.contacts.forEach(c => {
+      if (!Array.isArray(c.programs)) {
+        c.programs = [];
+      }
+    });
   }
 
   saveContacts() {
@@ -734,6 +763,8 @@ class SocialCircleApp {
     this.renderStats();
     this.renderPromisedDeck();
     this.renderContactsGrid();
+    this.renderCalendarSchedule();
+    this.updateCalendarBadges();
   }
 
   renderStats() {
@@ -1581,6 +1612,295 @@ class SocialCircleApp {
   // GOOGLE CALENDAR SCHEDULER & PROGRAM ENGINE
   // ========================================================================
 
+  getAllPrograms() {
+    const programs = [];
+    this.contacts.forEach(contact => {
+      // 1. Explicit contact.programs array
+      if (Array.isArray(contact.programs)) {
+        contact.programs.forEach(prog => {
+          programs.push({
+            ...prog,
+            contactId: contact.id,
+            contactName: contact.name,
+            contactPhone: contact.phone,
+            contactCircle: contact.circle
+          });
+        });
+      }
+
+      // 2. Incorporate contact.promisedCall if not already in programs
+      if (contact.promisedCall && contact.promisedCall.isPromised && contact.promisedCall.deadline) {
+        const alreadyIncluded = programs.some(p => p.contactId === contact.id && p.dateTime === contact.promisedCall.deadline);
+        if (!alreadyIncluded) {
+          programs.push({
+            id: 'promised_' + contact.id,
+            contactId: contact.id,
+            contactName: contact.name,
+            contactPhone: contact.phone,
+            contactCircle: contact.circle,
+            title: contact.promisedCall.reason || `Promised callback to ${contact.name}`,
+            dateTime: contact.promisedCall.deadline,
+            durationMinutes: 30,
+            location: contact.phone ? `Phone (${contact.phone})` : 'Phone Call / Meetup',
+            notes: contact.nextTopicsToAsk || 'Scheduled callback',
+            completed: false,
+            isPromisedCall: true
+          });
+        }
+      }
+    });
+
+    // Sort by dateTime ascending (earliest / overdue first)
+    programs.sort((a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime());
+    return programs;
+  }
+
+  updateCalendarBadges() {
+    const activePrograms = this.getAllPrograms().filter(p => !p.completed);
+    const count = activePrograms.length;
+
+    const headerBadge = document.getElementById('headerCalendarBadge');
+    if (headerBadge) {
+      headerBadge.textContent = count;
+      headerBadge.style.display = count > 0 ? 'inline-block' : 'none';
+    }
+
+    const circleBadge = document.getElementById('circleCalendarBadge');
+    if (circleBadge) {
+      circleBadge.textContent = count;
+      circleBadge.style.display = count > 0 ? 'inline-block' : 'none';
+    }
+  }
+
+  switchView(viewName) {
+    const calSection = document.getElementById('calendarScheduleSection');
+    const contactsSection = document.getElementById('contactsMainSection');
+    const toolbarFilters = document.querySelector('.toolbar-filters');
+    const circleTabs = document.querySelectorAll('.circle-tab');
+    const mobileNavItems = document.querySelectorAll('.mobile-nav-item');
+
+    if (viewName === 'calendar') {
+      if (calSection) calSection.style.display = 'flex';
+      if (contactsSection) contactsSection.style.display = 'none';
+      if (toolbarFilters) toolbarFilters.style.display = 'none';
+
+      circleTabs.forEach(t => {
+        if (t.dataset.circle === 'calendar') t.classList.add('active');
+        else t.classList.remove('active');
+      });
+
+      mobileNavItems.forEach(item => {
+        if (item.dataset.nav === 'calendar') item.classList.add('active');
+        else item.classList.remove('active');
+      });
+
+      this.renderCalendarSchedule();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      if (calSection) calSection.style.display = 'none';
+      if (contactsSection) contactsSection.style.display = 'block';
+      if (toolbarFilters) toolbarFilters.style.display = 'flex';
+
+      circleTabs.forEach(t => {
+        if (t.dataset.circle === 'calendar') t.classList.remove('active');
+        else if (t.dataset.circle === (this.currentCircleFilter || 'all')) t.classList.add('active');
+      });
+
+      mobileNavItems.forEach(item => {
+        if (item.dataset.nav === 'circle') item.classList.add('active');
+        else if (item.dataset.nav === 'calendar') item.classList.remove('active');
+      });
+
+      this.renderContactsGrid();
+    }
+  }
+
+  renderCalendarSchedule() {
+    const list = document.getElementById('calendarScheduleList');
+    if (!list) return;
+
+    const programs = this.getAllPrograms();
+    this.updateCalendarBadges();
+
+    if (programs.length === 0) {
+      list.innerHTML = `
+        <div class="empty-state" style="padding: 2.5rem 1rem;">
+          <div class="empty-illustration">📅</div>
+          <h3>No Upcoming Programs Scheduled</h3>
+          <p>Set a date to call a friend, grab coffee, or catch up. It will sync directly to Google Calendar and your phone!</p>
+          <button class="btn btn-primary" id="btnEmptyScheduleProgram" style="margin-top: 1rem;">
+            <span>➕ Schedule a Program</span>
+          </button>
+        </div>
+      `;
+      const btnEmpty = document.getElementById('btnEmptyScheduleProgram');
+      if (btnEmpty) btnEmpty.onclick = () => this.openCalendarModal();
+      return;
+    }
+
+    const now = Date.now();
+    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+    list.innerHTML = programs.map(p => {
+      const d = new Date(p.dateTime);
+      const isValid = !isNaN(d.getTime());
+      const month = isValid ? months[d.getMonth()] : 'DATE';
+      const day = isValid ? d.getDate() : '--';
+      const timeStr = isValid ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      const dateStr = isValid ? d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '';
+      const isOverdue = isValid && d.getTime() < now && !p.completed;
+
+      // Build universal Google Calendar URL
+      const pad = n => String(n).padStart(2, '0');
+      const startStr = isValid ? `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z` : '';
+      const durMs = (p.durationMinutes || 30) * 60 * 1000;
+      const endD = isValid ? new Date(d.getTime() + durMs) : new Date();
+      const endStr = isValid ? `${endD.getUTCFullYear()}${pad(endD.getUTCMonth() + 1)}${pad(endD.getUTCDate())}${pad(endD.getUTCHours())}${pad(endD.getUTCMinutes())}${pad(endD.getUTCSeconds())}Z` : '';
+      const fullDesc = `${p.notes ? p.notes + '\n\n' : ''}Scheduled via Orbit - Social Circle Tracker\nContact: ${p.contactName || ''}${p.contactPhone ? ' (' + p.contactPhone + ')' : ''}`;
+      const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(p.title)}&dates=${startStr}/${endStr}&details=${encodeURIComponent(fullDesc)}&location=${encodeURIComponent(p.location || '')}`;
+
+      return `
+        <div class="program-card ${p.completed ? 'program-completed' : ''} ${isOverdue ? 'program-overdue' : ''}" data-program-id="${p.id}" data-contact-id="${p.contactId}">
+          <div class="program-card-left">
+            <div class="program-date-badge ${isOverdue ? 'badge-overdue' : ''}">
+              <span class="p-month">${month}</span>
+              <span class="p-day">${day}</span>
+              <span class="p-time">${timeStr}</span>
+            </div>
+            <div class="program-details">
+              <h4>
+                ${this.escapeHtml(p.title)}
+                <span class="program-friend-tag">👤 ${this.escapeHtml(p.contactName || 'Friend')}</span>
+                ${isOverdue ? '<span class="status-badge status-overdue" style="font-size:0.68rem; padding: 1px 6px;">⚠️ Past Due</span>' : ''}
+                ${p.completed ? '<span class="status-badge status-thriving" style="font-size:0.68rem; padding: 1px 6px;">✓ Completed</span>' : ''}
+              </h4>
+              <div class="program-meta">
+                <span>📅 ${dateStr} at ${timeStr}</span>
+                ${p.location ? `<span>📍 ${this.escapeHtml(p.location)}</span>` : ''}
+                <span>⏱️ ${p.durationMinutes || 30} mins</span>
+              </div>
+              ${p.notes ? `<p class="program-note">💬 ${this.escapeHtml(p.notes)}</p>` : ''}
+            </div>
+          </div>
+          <div class="program-card-actions">
+            <a href="${gcalUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-secondary btn-program-gcal" data-prog-id="${p.id}" title="Open or add in Google Calendar">
+              📅 Google Calendar ↗
+            </a>
+            <button class="btn btn-sm btn-secondary btn-program-ics" data-prog-id="${p.id}" data-contact-id="${p.contactId}" title="Download .ics offline file">
+              📥 .ICS
+            </button>
+            ${!p.completed ? `
+              <button class="btn btn-sm btn-primary btn-program-done" data-prog-id="${p.id}" data-contact-id="${p.contactId}" title="Mark completed and log interaction">
+                ✅ Log & Done
+              </button>
+            ` : ''}
+            <button class="btn btn-sm btn-ghost btn-program-delete" data-prog-id="${p.id}" data-contact-id="${p.contactId}" title="Remove program">
+              🗑️
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Bind item actions
+    list.querySelectorAll('.btn-program-ics').forEach(btn => {
+      btn.onclick = () => {
+        const prog = programs.find(p => p.id === btn.dataset.progId);
+        if (prog) {
+          this.downloadIcsCalendarEvent({
+            contactId: prog.contactId,
+            title: prog.title,
+            dateTime: prog.dateTime,
+            durationMinutes: prog.durationMinutes,
+            location: prog.location,
+            notes: prog.notes
+          });
+        }
+      };
+    });
+
+    list.querySelectorAll('.btn-program-done').forEach(btn => {
+      btn.onclick = () => {
+        this.completeProgram(btn.dataset.contactId, btn.dataset.progId);
+      };
+    });
+
+    list.querySelectorAll('.btn-program-delete').forEach(btn => {
+      btn.onclick = () => {
+        this.deleteProgram(btn.dataset.contactId, btn.dataset.progId);
+      };
+    });
+
+    // On Android Native WebView, route .btn-program-gcal clicks to native Calendar Intent
+    if (window.AndroidBridge && typeof window.AndroidBridge.openGoogleCalendar === 'function') {
+      list.querySelectorAll('.btn-program-gcal').forEach(a => {
+        a.onclick = (e) => {
+          e.preventDefault();
+          const prog = programs.find(p => p.id === a.dataset.progId);
+          if (prog) {
+            const d = new Date(prog.dateTime);
+            const durMs = (prog.durationMinutes || 30) * 60 * 1000;
+            const endD = new Date(d.getTime() + durMs);
+            const fullDesc = `${prog.notes ? prog.notes + '\n\n' : ''}Scheduled via Orbit - Social Circle Tracker\nContact: ${prog.contactName || ''}`;
+            window.AndroidBridge.openGoogleCalendar(prog.title, fullDesc, prog.location || '', d.getTime(), endD.getTime(), a.href);
+          }
+        };
+      });
+    }
+  }
+
+  completeProgram(contactId, programId) {
+    const contact = this.contacts.find(c => c.id === contactId);
+    if (!contact) return;
+
+    if (Array.isArray(contact.programs)) {
+      const prog = contact.programs.find(p => p.id === programId);
+      if (prog) {
+        prog.completed = true;
+      }
+    }
+
+    if (contact.promisedCall && (programId === 'promised_' + contact.id || !contact.programs || contact.programs.length === 0)) {
+      contact.promisedCall = null;
+    }
+
+    // Add interaction and XP
+    const interaction = {
+      id: 'i_' + Date.now(),
+      type: 'meetup',
+      initiator: 'me',
+      date: new Date().toISOString(),
+      mood: 'great',
+      summary: `Completed scheduled program with ${contact.name}!`,
+      nextTopics: contact.nextTopicsToAsk || ''
+    };
+    if (!contact.interactions) contact.interactions = [];
+    contact.interactions.unshift(interaction);
+    contact.currentXp = Math.min(1000, (contact.currentXp || 0) + 35);
+
+    this.saveContacts();
+    this.render();
+    this.showToast(`🎉 Program completed with ${contact.name}! (+35 XP)`, 'success');
+    this.playLevelUpSound();
+  }
+
+  deleteProgram(contactId, programId) {
+    const contact = this.contacts.find(c => c.id === contactId);
+    if (!contact) return;
+
+    if (Array.isArray(contact.programs)) {
+      contact.programs = contact.programs.filter(p => p.id !== programId);
+    }
+
+    if (programId === 'promised_' + contact.id && contact.promisedCall) {
+      contact.promisedCall = null;
+    }
+
+    this.saveContacts();
+    this.render();
+    this.showToast('Program removed from schedule.', 'info');
+  }
+
   openCalendarModal(contactId = null, defaultTitle = '', defaultDate = null, defaultNotes = '') {
     const modal = document.getElementById('calendarModal');
     const friendSelect = document.getElementById('calFriendSelect');
@@ -1684,6 +2004,19 @@ class SocialCircleApp {
     this.downloadIcsFile({ title, description: fullDescription, location, startDate, endDate });
 
     if (contact) {
+      if (!Array.isArray(contact.programs)) contact.programs = [];
+      const newProgram = {
+        id: 'prog_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+        title,
+        dateTime: startDate.toISOString(),
+        durationMinutes: parseInt(durationMinutes, 10) || 30,
+        location,
+        notes,
+        completed: false,
+        createdAt: new Date().toISOString()
+      };
+      contact.programs.unshift(newProgram);
+
       contact.promisedCall = {
         isPromised: true,
         deadline: startDate.toISOString(),
@@ -1695,10 +2028,16 @@ class SocialCircleApp {
       this.playChimeSound();
     }
     this.closeModal('calendarModal');
+    this.switchView('calendar');
   }
 
   scheduleGoogleCalendarEvent({ contactId, title, dateTime, durationMinutes = 30, location = '', notes = '' }) {
     const contact = this.contacts.find(c => c.id === contactId);
+    if (!contact) {
+      this.showToast('Please select a friend first!', 'warning');
+      return;
+    }
+
     let startDate = new Date(dateTime);
     if (isNaN(startDate.getTime())) {
       startDate = new Date(Date.now() + 24 * 3600 * 1000);
@@ -1718,32 +2057,59 @@ class SocialCircleApp {
     const fullDescription = `${notes ? notes + '\n\n' : ''}Scheduled via Orbit - Social Circle Tracker\nContact: ${contact ? contact.name : ''}${contact && contact.phone ? ' (' + contact.phone + ')' : ''}`;
     const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${startStr}/${endStr}&details=${encodeURIComponent(fullDescription)}&location=${encodeURIComponent(location)}`;
 
-    // 1. Native Android App Bridge with fallback to universal gcalUrl
+    // 1. Record program in contact.programs
+    if (!Array.isArray(contact.programs)) {
+      contact.programs = [];
+    }
+    const newProgram = {
+      id: 'prog_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+      title,
+      dateTime: startDate.toISOString(),
+      durationMinutes: parseInt(durationMinutes, 10) || 30,
+      location,
+      notes,
+      completed: false,
+      createdAt: new Date().toISOString()
+    };
+    contact.programs.unshift(newProgram);
+
+    // 2. Keep promised callback in sync
+    contact.promisedCall = {
+      isPromised: true,
+      deadline: startDate.toISOString(),
+      reason: title
+    };
+
+    this.saveContacts();
+    this.render();
+
+    // 3. Dispatch to Android Native Bridge OR Desktop/Web
     if (window.AndroidBridge && typeof window.AndroidBridge.openGoogleCalendar === 'function') {
       try {
         window.AndroidBridge.openGoogleCalendar(title, fullDescription, location, startDate.getTime(), endDate.getTime(), gcalUrl);
+        this.showToast(`📅 Scheduled with ${contact.name}! Opening Calendar app...`, 'success');
       } catch (e) {
         console.warn('AndroidBridge calendar error:', e);
         try {
-          const win = window.open(gcalUrl, '_blank');
-          if (!win || win.closed || typeof win.closed === 'undefined') {
-            window.location.href = gcalUrl;
-          }
+          window.open(gcalUrl, '_blank');
         } catch (ignored) {}
+        this.showToast(`📅 Scheduled with ${contact.name}!`, 'success');
       }
     } else {
-      // 2. Mobile / Desktop Browser handler (resilient to popup blockers)
+      // Desktop / Web: open in new tab safely without ever redirecting or hijacking Orbit
       try {
-        const win = window.open(gcalUrl, '_blank');
-        if (!win || win.closed || typeof win.closed === 'undefined') {
-          window.location.href = gcalUrl;
+        const win = window.open(gcalUrl, '_blank', 'noopener,noreferrer');
+        if (!win) {
+          this.showToast(`📅 Scheduled! <a href="${gcalUrl}" target="_blank" rel="noopener noreferrer" style="color:#fff; text-decoration:underline; font-weight:bold; margin-left:8px;">Open Google Calendar ↗</a>`, 'success');
+        } else {
+          this.showToast(`📅 Scheduled with ${contact.name}! Opening Google Calendar...`, 'success');
         }
       } catch (err) {
-        window.location.href = gcalUrl;
+        this.showToast(`📅 Scheduled! <a href="${gcalUrl}" target="_blank" rel="noopener noreferrer" style="color:#fff; text-decoration:underline; font-weight:bold; margin-left:8px;">Open Google Calendar ↗</a>`, 'success');
       }
     }
 
-    // 3. Direct Google Calendar API sync if OAuth token active
+    // 4. Direct Google Calendar API sync if OAuth token active
     if (this.googleSync && this.googleSync.accessToken) {
       this.googleSync.createGoogleCalendarEvent({
         title,
@@ -1754,20 +2120,9 @@ class SocialCircleApp {
       }).catch(e => console.warn('OAuth calendar sync note:', e));
     }
 
-    // 4. Keep Orbit in sync: Record promised callback & update timeline
-    if (contact) {
-      contact.promisedCall = {
-        isPromised: true,
-        deadline: startDate.toISOString(),
-        reason: title
-      };
-      this.saveContacts();
-      this.render();
-      this.showToast(`📅 Scheduled with ${contact.name}! Opening Google Calendar...`, 'success');
-      this.playChimeSound();
-    }
-
+    this.playChimeSound();
     this.closeModal('calendarModal');
+    this.switchView('calendar');
   }
 
   // ========================================================================
@@ -1780,6 +2135,18 @@ class SocialCircleApp {
     document.getElementById('emptyAddBtn').onclick = () => this.openAddEditContactModal();
     document.getElementById('quickLogBtn').onclick = () => this.openLogInteractionModal();
     document.getElementById('themeToggleBtn').onclick = () => this.toggleTheme();
+
+    // Desktop Header Calendar Button
+    const headerCalBtn = document.getElementById('headerCalendarBtn');
+    if (headerCalBtn) {
+      headerCalBtn.onclick = () => this.switchView('calendar');
+    }
+
+    // Calendar Section "Schedule New Program" Button
+    const btnNewProg = document.getElementById('btnScheduleNewProgram');
+    if (btnNewProg) {
+      btnNewProg.onclick = () => this.openCalendarModal();
+    }
 
     // Mobile quick action bar
     const mobileActionAdd = document.getElementById('mobileActionAddFriend');
@@ -1879,13 +2246,17 @@ class SocialCircleApp {
     document.getElementById('loadSampleDataBtn').onclick = () => this.resetSampleData();
     document.getElementById('clearAllDataBtn').onclick = () => this.clearAllData();
 
-    // Circle tab filters
+    // Circle tab filters & Calendar View
     document.querySelectorAll('.circle-tab').forEach(tab => {
       tab.onclick = () => {
+        if (tab.dataset.circle === 'calendar') {
+          this.switchView('calendar');
+          return;
+        }
         document.querySelectorAll('.circle-tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         this.currentCircleFilter = tab.dataset.circle;
-        this.renderContactsGrid();
+        this.switchView('circles');
       };
     });
 
@@ -2195,6 +2566,7 @@ class SocialCircleApp {
         const navTarget = item.dataset.nav;
 
         if (navTarget === 'circle') {
+          this.switchView('circles');
           this.currentCircleFilter = 'all';
           this.currentStatusFilter = 'all';
           document.querySelectorAll('.circle-tab').forEach(t => t.classList.remove('active'));
@@ -2204,6 +2576,7 @@ class SocialCircleApp {
           this.renderContactsGrid();
           window.scrollTo({ top: 0, behavior: 'smooth' });
         } else if (navTarget === 'callbacks') {
+          this.switchView('circles');
           this.currentStatusFilter = 'owe_call';
           document.getElementById('statusFilterSelect').value = 'owe_call';
           this.renderContactsGrid();
@@ -2212,7 +2585,7 @@ class SocialCircleApp {
             deck.scrollIntoView({ behavior: 'smooth' });
           }
         } else if (navTarget === 'calendar') {
-          this.openCalendarModal();
+          this.switchView('calendar');
         } else if (navTarget === 'settings') {
           document.getElementById('dataSettingsModal').style.display = 'flex';
         }
@@ -2221,7 +2594,7 @@ class SocialCircleApp {
 
     const mobileNavCalendar = document.getElementById('mobileNavCalendar');
     if (mobileNavCalendar) {
-      mobileNavCalendar.onclick = () => this.openCalendarModal();
+      mobileNavCalendar.onclick = () => this.switchView('calendar');
     }
 
     const mobileFabAdd = document.getElementById('mobileFabAdd');

@@ -8,6 +8,8 @@
 // CONFIGURATION & CONSTANTS
 // ==========================================================================
 
+const APP_VERSION = '1.0.1';
+
 const LEVEL_DEFINITIONS = [
   { level: 1, title: 'Acquaintance', minXp: 0, maxXp: 99, colorClass: 'lvl-1' },
   { level: 2, title: 'Familiar Face', minXp: 100, maxXp: 199, colorClass: 'lvl-2' },
@@ -52,6 +54,17 @@ const SAMPLE_CONTACTS = [
       deadline: new Date(Date.now() - 36 * 3600 * 1000).toISOString(), // overdue by 36 hours
       reason: 'I said "I will call you back this afternoon" on Tuesday and completely forgot!'
     },
+    programs: [
+      {
+        id: 'prog_c1_1',
+        title: 'Callback Marc & ask about golden retriever puppy',
+        dateTime: new Date(Date.now() + 2 * 3600 * 1000).toISOString(),
+        durationMinutes: 30,
+        location: 'Phone (+1 555-0144)',
+        notes: 'Marc called earlier. Remember to ask how his new puppy is settling in!',
+        completed: false
+      }
+    ],
     interactions: [
       {
         id: 'i1_1',
@@ -87,6 +100,17 @@ const SAMPLE_CONTACTS = [
     notes: 'Go-to person for life advice, book recommendations, and venting.',
     nextTopicsToAsk: 'Did she hear back from the grant committee?',
     promisedCall: null,
+    programs: [
+      {
+        id: 'prog_c2_1',
+        title: 'Coffee catch-up at Blue Bottle Cafe',
+        dateTime: new Date(Date.now() + 36 * 3600 * 1000).toISOString(),
+        durationMinutes: 60,
+        location: 'Blue Bottle Cafe, Downtown',
+        notes: 'Celebrate grant announcement and discuss upcoming book club reading',
+        completed: false
+      }
+    ],
     interactions: [
       {
         id: 'i2_1',
@@ -191,6 +215,7 @@ class SocialCircleApp {
     this.registerServiceWorker();
     this.initNotifications();
     this.initOfflineHandling();
+    this.initNativePhoneIntegration();
     try {
       if (this.googleSync) {
         this.googleSync.initGoogleIdentity();
@@ -227,6 +252,13 @@ class SocialCircleApp {
       console.error('Failed to load contacts from localStorage:', e);
       this.contacts = JSON.parse(JSON.stringify(SAMPLE_CONTACTS));
     }
+
+    // Ensure every contact has a valid programs array
+    this.contacts.forEach(c => {
+      if (!Array.isArray(c.programs)) {
+        c.programs = [];
+      }
+    });
   }
 
   saveContacts() {
@@ -734,6 +766,9 @@ class SocialCircleApp {
     this.renderStats();
     this.renderPromisedDeck();
     this.renderContactsGrid();
+    this.renderCalendarSchedule();
+    this.updateCalendarBadges();
+    this.updateCallLogsBadges();
   }
 
   renderStats() {
@@ -1041,7 +1076,7 @@ class SocialCircleApp {
   // INTERACTION LOGGING MODAL
   // ========================================================================
 
-  openLogInteractionModal(contactId = null) {
+  openLogInteractionModal(contactId = null, callPrefill = null) {
     const modal = document.getElementById('interactionModal');
     const pickerWrap = document.getElementById('logContactPickerWrap');
     const select = document.getElementById('logContactSelect');
@@ -1087,6 +1122,70 @@ class SocialCircleApp {
 
     document.getElementById('promiseDeadlineContainer').style.display = 'none';
     document.getElementById('reciprocityFieldGroup').style.display = 'block';
+
+    // Apply callPrefill if passed
+    if (callPrefill) {
+      if (callPrefill.date) {
+        const cd = new Date(callPrefill.date);
+        document.getElementById('interactionDate').value = new Date(cd.getTime() - cd.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      }
+      if (callPrefill.summary) {
+        document.getElementById('interactionSummary').value = callPrefill.summary;
+      }
+      if (callPrefill.direction) {
+        document.querySelectorAll('.radio-card').forEach(rc => {
+          rc.classList.remove('selected');
+          const radio = rc.querySelector('input');
+          if (radio.value === callPrefill.direction) {
+            radio.checked = true;
+            rc.classList.add('selected');
+          }
+        });
+      }
+    }
+
+    // Check for recent unlogged call suggestions with this friend
+    const suggestionBox = document.getElementById('recentCallSuggestionBox');
+    const targetContactId = contactId || (select.value ? select.value : null);
+    const targetContact = this.contacts.find(c => c.id === targetContactId);
+
+    if (suggestionBox && targetContact && targetContact.phone && !callPrefill) {
+      const logRes = this.getDeviceCallLogs(20);
+      const calls = (logRes && logRes.calls) ? logRes.calls : [];
+      const recentCall = calls.find(call => {
+        return this.normalizePhoneNumber(call.number) === this.normalizePhoneNumber(targetContact.phone);
+      });
+
+      if (recentCall && (Date.now() - recentCall.date) < 7 * 24 * 3600 * 1000) {
+        const isMissed = recentCall.type === 'missed';
+        const d = new Date(recentCall.date);
+        suggestionBox.style.display = 'flex';
+        document.getElementById('recentCallSuggestionContent').innerHTML = `
+          <strong>${recentCall.direction === 'them' ? '📥 Incoming' : '📤 Outgoing'} ${isMissed ? 'Missed Call' : 'Call'}</strong> 
+          • ${d.toLocaleDateString([], {month:'short', day:'numeric'})} at ${d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} 
+          (${this.formatDuration(recentCall.duration)})
+        `;
+        document.getElementById('btnApplyCallSuggestion').onclick = () => {
+          document.getElementById('interactionDate').value = new Date(recentCall.date - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+          document.getElementById('interactionSummary').value = `${recentCall.direction === 'them' ? 'Incoming' : 'Outgoing'} call (${this.formatDuration(recentCall.duration)})`;
+          
+          document.querySelectorAll('.radio-card').forEach(rc => {
+            rc.classList.remove('selected');
+            const radio = rc.querySelector('input');
+            if (radio.value === recentCall.direction) {
+              radio.checked = true;
+              rc.classList.add('selected');
+            }
+          });
+          suggestionBox.style.display = 'none';
+          this.showToast('⚡ Auto-filled details from call log!', 'info');
+        };
+      } else {
+        suggestionBox.style.display = 'none';
+      }
+    } else if (suggestionBox) {
+      suggestionBox.style.display = 'none';
+    }
 
     modal.style.display = 'flex';
   }
@@ -1366,6 +1465,12 @@ class SocialCircleApp {
       this.closeModal('profileModal');
       this.openAddEditContactModal(contact.id);
     };
+    const profDeleteBtn = document.getElementById('profDeleteBtn');
+    if (profDeleteBtn) {
+      profDeleteBtn.onclick = () => {
+        this.deleteFriend(contact.id);
+      };
+    }
 
     // Timeline history
     const timelineList = document.getElementById('profTimelineList');
@@ -1411,10 +1516,11 @@ class SocialCircleApp {
   // ADD / EDIT CONTACT MODAL
   // ========================================================================
 
-  openAddEditContactModal(contactId = null) {
+  openAddEditContactModal(contactId = null, prefill = null) {
     const modal = document.getElementById('contactModal');
     const form = document.getElementById('contactForm');
     const title = document.getElementById('contactModalTitle');
+    const importActions = document.getElementById('contactImportActionsWrap');
     form.reset();
 
     const slider = document.getElementById('formInitialLevel');
@@ -1429,10 +1535,17 @@ class SocialCircleApp {
 
     slider.oninput = (e) => updateSliderUI(e.target.value);
 
+    const btnDelete = document.getElementById('btnDeleteFriendFromModal');
+
     if (contactId) {
       const contact = this.contacts.find(c => c.id === contactId);
       if (!contact) return;
       title.textContent = 'Edit Friend';
+      if (importActions) importActions.style.display = 'none';
+      if (btnDelete) {
+        btnDelete.style.display = 'inline-flex';
+        btnDelete.onclick = () => this.deleteFriend(contact.id);
+      }
       document.getElementById('editContactId').value = contact.id;
       document.getElementById('formName').value = contact.name;
       document.getElementById('formNickname').value = contact.nickname || '';
@@ -1449,7 +1562,18 @@ class SocialCircleApp {
       updateSliderUI(m.levelDef.level);
     } else {
       title.textContent = 'Add New Friend';
+      if (importActions) importActions.style.display = 'flex';
+      if (btnDelete) {
+        btnDelete.style.display = 'none';
+        btnDelete.onclick = null;
+      }
       document.getElementById('editContactId').value = '';
+      if (prefill) {
+        if (prefill.name) document.getElementById('formName').value = prefill.name;
+        if (prefill.phone) document.getElementById('formPhone').value = prefill.phone;
+        if (prefill.notes) document.getElementById('formNotes').value = prefill.notes;
+        if (prefill.circle) document.getElementById('formCircle').value = prefill.circle;
+      }
       slider.value = 5;
       updateSliderUI(5);
     }
@@ -1519,6 +1643,24 @@ class SocialCircleApp {
     this.render();
   }
 
+  deleteFriend(contactId) {
+    const contact = this.contacts.find(c => c.id === contactId);
+    if (!contact) return;
+    if (!confirm(`Are you sure you want to remove "${contact.name}" from your Orbit circle?`)) {
+      return;
+    }
+    const name = contact.name;
+    this.contacts = this.contacts.filter(c => c.id !== contactId);
+    this.saveContacts();
+    this.closeModal('contactModal');
+    this.closeModal('profileModal');
+    this.render();
+    if (this.googleSync && typeof this.googleSync.scheduleAutoSync === 'function') {
+      this.googleSync.scheduleAutoSync();
+    }
+    this.showToast(`Removed "${name}" from your circle.`, 'info');
+  }
+
   // ========================================================================
   // SETTINGS & DATA EXPORT / IMPORT
   // ========================================================================
@@ -1580,6 +1722,295 @@ class SocialCircleApp {
   // ========================================================================
   // GOOGLE CALENDAR SCHEDULER & PROGRAM ENGINE
   // ========================================================================
+
+  getAllPrograms() {
+    const programs = [];
+    this.contacts.forEach(contact => {
+      // 1. Explicit contact.programs array
+      if (Array.isArray(contact.programs)) {
+        contact.programs.forEach(prog => {
+          programs.push({
+            ...prog,
+            contactId: contact.id,
+            contactName: contact.name,
+            contactPhone: contact.phone,
+            contactCircle: contact.circle
+          });
+        });
+      }
+
+      // 2. Incorporate contact.promisedCall if not already in programs
+      if (contact.promisedCall && contact.promisedCall.isPromised && contact.promisedCall.deadline) {
+        const alreadyIncluded = programs.some(p => p.contactId === contact.id && p.dateTime === contact.promisedCall.deadline);
+        if (!alreadyIncluded) {
+          programs.push({
+            id: 'promised_' + contact.id,
+            contactId: contact.id,
+            contactName: contact.name,
+            contactPhone: contact.phone,
+            contactCircle: contact.circle,
+            title: contact.promisedCall.reason || `Promised callback to ${contact.name}`,
+            dateTime: contact.promisedCall.deadline,
+            durationMinutes: 30,
+            location: contact.phone ? `Phone (${contact.phone})` : 'Phone Call / Meetup',
+            notes: contact.nextTopicsToAsk || 'Scheduled callback',
+            completed: false,
+            isPromisedCall: true
+          });
+        }
+      }
+    });
+
+    // Sort by dateTime ascending (earliest / overdue first)
+    programs.sort((a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime());
+    return programs;
+  }
+
+  updateCalendarBadges() {
+    const activePrograms = this.getAllPrograms().filter(p => !p.completed);
+    const count = activePrograms.length;
+
+    const headerBadge = document.getElementById('headerCalendarBadge');
+    if (headerBadge) {
+      headerBadge.textContent = count;
+      headerBadge.style.display = count > 0 ? 'inline-block' : 'none';
+    }
+
+    const circleBadge = document.getElementById('circleCalendarBadge');
+    if (circleBadge) {
+      circleBadge.textContent = count;
+      circleBadge.style.display = count > 0 ? 'inline-block' : 'none';
+    }
+  }
+
+  switchView(viewName) {
+    const calSection = document.getElementById('calendarScheduleSection');
+    const contactsSection = document.getElementById('contactsMainSection');
+    const toolbarFilters = document.querySelector('.toolbar-filters');
+    const circleTabs = document.querySelectorAll('.circle-tab');
+    const mobileNavItems = document.querySelectorAll('.mobile-nav-item');
+
+    if (viewName === 'calendar') {
+      if (calSection) calSection.style.display = 'flex';
+      if (contactsSection) contactsSection.style.display = 'none';
+      if (toolbarFilters) toolbarFilters.style.display = 'none';
+
+      circleTabs.forEach(t => {
+        if (t.dataset.circle === 'calendar') t.classList.add('active');
+        else t.classList.remove('active');
+      });
+
+      mobileNavItems.forEach(item => {
+        if (item.dataset.nav === 'calendar') item.classList.add('active');
+        else item.classList.remove('active');
+      });
+
+      this.renderCalendarSchedule();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      if (calSection) calSection.style.display = 'none';
+      if (contactsSection) contactsSection.style.display = 'block';
+      if (toolbarFilters) toolbarFilters.style.display = 'flex';
+
+      circleTabs.forEach(t => {
+        if (t.dataset.circle === 'calendar') t.classList.remove('active');
+        else if (t.dataset.circle === (this.currentCircleFilter || 'all')) t.classList.add('active');
+      });
+
+      mobileNavItems.forEach(item => {
+        if (item.dataset.nav === 'circle') item.classList.add('active');
+        else if (item.dataset.nav === 'calendar') item.classList.remove('active');
+      });
+
+      this.renderContactsGrid();
+    }
+  }
+
+  renderCalendarSchedule() {
+    const list = document.getElementById('calendarScheduleList');
+    if (!list) return;
+
+    const programs = this.getAllPrograms();
+    this.updateCalendarBadges();
+
+    if (programs.length === 0) {
+      list.innerHTML = `
+        <div class="empty-state" style="padding: 2.5rem 1rem;">
+          <div class="empty-illustration">📅</div>
+          <h3>No Upcoming Programs Scheduled</h3>
+          <p>Set a date to call a friend, grab coffee, or catch up. It will sync directly to Google Calendar and your phone!</p>
+          <button class="btn btn-primary" id="btnEmptyScheduleProgram" style="margin-top: 1rem;">
+            <span>➕ Schedule a Program</span>
+          </button>
+        </div>
+      `;
+      const btnEmpty = document.getElementById('btnEmptyScheduleProgram');
+      if (btnEmpty) btnEmpty.onclick = () => this.openCalendarModal();
+      return;
+    }
+
+    const now = Date.now();
+    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+    list.innerHTML = programs.map(p => {
+      const d = new Date(p.dateTime);
+      const isValid = !isNaN(d.getTime());
+      const month = isValid ? months[d.getMonth()] : 'DATE';
+      const day = isValid ? d.getDate() : '--';
+      const timeStr = isValid ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      const dateStr = isValid ? d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '';
+      const isOverdue = isValid && d.getTime() < now && !p.completed;
+
+      // Build universal Google Calendar URL
+      const pad = n => String(n).padStart(2, '0');
+      const startStr = isValid ? `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z` : '';
+      const durMs = (p.durationMinutes || 30) * 60 * 1000;
+      const endD = isValid ? new Date(d.getTime() + durMs) : new Date();
+      const endStr = isValid ? `${endD.getUTCFullYear()}${pad(endD.getUTCMonth() + 1)}${pad(endD.getUTCDate())}${pad(endD.getUTCHours())}${pad(endD.getUTCMinutes())}${pad(endD.getUTCSeconds())}Z` : '';
+      const fullDesc = `${p.notes ? p.notes + '\n\n' : ''}Scheduled via Orbit - Social Circle Tracker\nContact: ${p.contactName || ''}${p.contactPhone ? ' (' + p.contactPhone + ')' : ''}`;
+      const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(p.title)}&dates=${startStr}/${endStr}&details=${encodeURIComponent(fullDesc)}&location=${encodeURIComponent(p.location || '')}`;
+
+      return `
+        <div class="program-card ${p.completed ? 'program-completed' : ''} ${isOverdue ? 'program-overdue' : ''}" data-program-id="${p.id}" data-contact-id="${p.contactId}">
+          <div class="program-card-left">
+            <div class="program-date-badge ${isOverdue ? 'badge-overdue' : ''}">
+              <span class="p-month">${month}</span>
+              <span class="p-day">${day}</span>
+              <span class="p-time">${timeStr}</span>
+            </div>
+            <div class="program-details">
+              <h4>
+                ${this.escapeHtml(p.title)}
+                <span class="program-friend-tag">👤 ${this.escapeHtml(p.contactName || 'Friend')}</span>
+                ${isOverdue ? '<span class="status-badge status-overdue" style="font-size:0.68rem; padding: 1px 6px;">⚠️ Past Due</span>' : ''}
+                ${p.completed ? '<span class="status-badge status-thriving" style="font-size:0.68rem; padding: 1px 6px;">✓ Completed</span>' : ''}
+              </h4>
+              <div class="program-meta">
+                <span>📅 ${dateStr} at ${timeStr}</span>
+                ${p.location ? `<span>📍 ${this.escapeHtml(p.location)}</span>` : ''}
+                <span>⏱️ ${p.durationMinutes || 30} mins</span>
+              </div>
+              ${p.notes ? `<p class="program-note">💬 ${this.escapeHtml(p.notes)}</p>` : ''}
+            </div>
+          </div>
+          <div class="program-card-actions">
+            <a href="${gcalUrl}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-secondary btn-program-gcal" data-prog-id="${p.id}" title="Open or add in Google Calendar">
+              📅 Google Calendar ↗
+            </a>
+            <button class="btn btn-sm btn-secondary btn-program-ics" data-prog-id="${p.id}" data-contact-id="${p.contactId}" title="Download .ics offline file">
+              📥 .ICS
+            </button>
+            ${!p.completed ? `
+              <button class="btn btn-sm btn-primary btn-program-done" data-prog-id="${p.id}" data-contact-id="${p.contactId}" title="Mark completed and log interaction">
+                ✅ Log & Done
+              </button>
+            ` : ''}
+            <button class="btn btn-sm btn-ghost btn-program-delete" data-prog-id="${p.id}" data-contact-id="${p.contactId}" title="Remove program">
+              🗑️
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Bind item actions
+    list.querySelectorAll('.btn-program-ics').forEach(btn => {
+      btn.onclick = () => {
+        const prog = programs.find(p => p.id === btn.dataset.progId);
+        if (prog) {
+          this.downloadIcsCalendarEvent({
+            contactId: prog.contactId,
+            title: prog.title,
+            dateTime: prog.dateTime,
+            durationMinutes: prog.durationMinutes,
+            location: prog.location,
+            notes: prog.notes
+          });
+        }
+      };
+    });
+
+    list.querySelectorAll('.btn-program-done').forEach(btn => {
+      btn.onclick = () => {
+        this.completeProgram(btn.dataset.contactId, btn.dataset.progId);
+      };
+    });
+
+    list.querySelectorAll('.btn-program-delete').forEach(btn => {
+      btn.onclick = () => {
+        this.deleteProgram(btn.dataset.contactId, btn.dataset.progId);
+      };
+    });
+
+    // On Android Native WebView, route .btn-program-gcal clicks to native Calendar Intent
+    if (window.AndroidBridge && typeof window.AndroidBridge.openGoogleCalendar === 'function') {
+      list.querySelectorAll('.btn-program-gcal').forEach(a => {
+        a.onclick = (e) => {
+          e.preventDefault();
+          const prog = programs.find(p => p.id === a.dataset.progId);
+          if (prog) {
+            const d = new Date(prog.dateTime);
+            const durMs = (prog.durationMinutes || 30) * 60 * 1000;
+            const endD = new Date(d.getTime() + durMs);
+            const fullDesc = `${prog.notes ? prog.notes + '\n\n' : ''}Scheduled via Orbit - Social Circle Tracker\nContact: ${prog.contactName || ''}`;
+            window.AndroidBridge.openGoogleCalendar(prog.title, fullDesc, prog.location || '', d.getTime(), endD.getTime(), a.href);
+          }
+        };
+      });
+    }
+  }
+
+  completeProgram(contactId, programId) {
+    const contact = this.contacts.find(c => c.id === contactId);
+    if (!contact) return;
+
+    if (Array.isArray(contact.programs)) {
+      const prog = contact.programs.find(p => p.id === programId);
+      if (prog) {
+        prog.completed = true;
+      }
+    }
+
+    if (contact.promisedCall && (programId === 'promised_' + contact.id || !contact.programs || contact.programs.length === 0)) {
+      contact.promisedCall = null;
+    }
+
+    // Add interaction and XP
+    const interaction = {
+      id: 'i_' + Date.now(),
+      type: 'meetup',
+      initiator: 'me',
+      date: new Date().toISOString(),
+      mood: 'great',
+      summary: `Completed scheduled program with ${contact.name}!`,
+      nextTopics: contact.nextTopicsToAsk || ''
+    };
+    if (!contact.interactions) contact.interactions = [];
+    contact.interactions.unshift(interaction);
+    contact.currentXp = Math.min(1000, (contact.currentXp || 0) + 35);
+
+    this.saveContacts();
+    this.render();
+    this.showToast(`🎉 Program completed with ${contact.name}! (+35 XP)`, 'success');
+    this.playLevelUpSound();
+  }
+
+  deleteProgram(contactId, programId) {
+    const contact = this.contacts.find(c => c.id === contactId);
+    if (!contact) return;
+
+    if (Array.isArray(contact.programs)) {
+      contact.programs = contact.programs.filter(p => p.id !== programId);
+    }
+
+    if (programId === 'promised_' + contact.id && contact.promisedCall) {
+      contact.promisedCall = null;
+    }
+
+    this.saveContacts();
+    this.render();
+    this.showToast('Program removed from schedule.', 'info');
+  }
 
   openCalendarModal(contactId = null, defaultTitle = '', defaultDate = null, defaultNotes = '') {
     const modal = document.getElementById('calendarModal');
@@ -1684,6 +2115,19 @@ class SocialCircleApp {
     this.downloadIcsFile({ title, description: fullDescription, location, startDate, endDate });
 
     if (contact) {
+      if (!Array.isArray(contact.programs)) contact.programs = [];
+      const newProgram = {
+        id: 'prog_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+        title,
+        dateTime: startDate.toISOString(),
+        durationMinutes: parseInt(durationMinutes, 10) || 30,
+        location,
+        notes,
+        completed: false,
+        createdAt: new Date().toISOString()
+      };
+      contact.programs.unshift(newProgram);
+
       contact.promisedCall = {
         isPromised: true,
         deadline: startDate.toISOString(),
@@ -1695,10 +2139,16 @@ class SocialCircleApp {
       this.playChimeSound();
     }
     this.closeModal('calendarModal');
+    this.switchView('calendar');
   }
 
   scheduleGoogleCalendarEvent({ contactId, title, dateTime, durationMinutes = 30, location = '', notes = '' }) {
     const contact = this.contacts.find(c => c.id === contactId);
+    if (!contact) {
+      this.showToast('Please select a friend first!', 'warning');
+      return;
+    }
+
     let startDate = new Date(dateTime);
     if (isNaN(startDate.getTime())) {
       startDate = new Date(Date.now() + 24 * 3600 * 1000);
@@ -1718,32 +2168,59 @@ class SocialCircleApp {
     const fullDescription = `${notes ? notes + '\n\n' : ''}Scheduled via Orbit - Social Circle Tracker\nContact: ${contact ? contact.name : ''}${contact && contact.phone ? ' (' + contact.phone + ')' : ''}`;
     const gcalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${startStr}/${endStr}&details=${encodeURIComponent(fullDescription)}&location=${encodeURIComponent(location)}`;
 
-    // 1. Native Android App Bridge with fallback to universal gcalUrl
+    // 1. Record program in contact.programs
+    if (!Array.isArray(contact.programs)) {
+      contact.programs = [];
+    }
+    const newProgram = {
+      id: 'prog_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+      title,
+      dateTime: startDate.toISOString(),
+      durationMinutes: parseInt(durationMinutes, 10) || 30,
+      location,
+      notes,
+      completed: false,
+      createdAt: new Date().toISOString()
+    };
+    contact.programs.unshift(newProgram);
+
+    // 2. Keep promised callback in sync
+    contact.promisedCall = {
+      isPromised: true,
+      deadline: startDate.toISOString(),
+      reason: title
+    };
+
+    this.saveContacts();
+    this.render();
+
+    // 3. Dispatch to Android Native Bridge OR Desktop/Web
     if (window.AndroidBridge && typeof window.AndroidBridge.openGoogleCalendar === 'function') {
       try {
         window.AndroidBridge.openGoogleCalendar(title, fullDescription, location, startDate.getTime(), endDate.getTime(), gcalUrl);
+        this.showToast(`📅 Scheduled with ${contact.name}! Opening Calendar app...`, 'success');
       } catch (e) {
         console.warn('AndroidBridge calendar error:', e);
         try {
-          const win = window.open(gcalUrl, '_blank');
-          if (!win || win.closed || typeof win.closed === 'undefined') {
-            window.location.href = gcalUrl;
-          }
+          window.open(gcalUrl, '_blank');
         } catch (ignored) {}
+        this.showToast(`📅 Scheduled with ${contact.name}!`, 'success');
       }
     } else {
-      // 2. Mobile / Desktop Browser handler (resilient to popup blockers)
+      // Desktop / Web: open in new tab safely without ever redirecting or hijacking Orbit
       try {
-        const win = window.open(gcalUrl, '_blank');
-        if (!win || win.closed || typeof win.closed === 'undefined') {
-          window.location.href = gcalUrl;
+        const win = window.open(gcalUrl, '_blank', 'noopener,noreferrer');
+        if (!win) {
+          this.showToast(`📅 Scheduled! <a href="${gcalUrl}" target="_blank" rel="noopener noreferrer" style="color:#fff; text-decoration:underline; font-weight:bold; margin-left:8px;">Open Google Calendar ↗</a>`, 'success');
+        } else {
+          this.showToast(`📅 Scheduled with ${contact.name}! Opening Google Calendar...`, 'success');
         }
       } catch (err) {
-        window.location.href = gcalUrl;
+        this.showToast(`📅 Scheduled! <a href="${gcalUrl}" target="_blank" rel="noopener noreferrer" style="color:#fff; text-decoration:underline; font-weight:bold; margin-left:8px;">Open Google Calendar ↗</a>`, 'success');
       }
     }
 
-    // 3. Direct Google Calendar API sync if OAuth token active
+    // 4. Direct Google Calendar API sync if OAuth token active
     if (this.googleSync && this.googleSync.accessToken) {
       this.googleSync.createGoogleCalendarEvent({
         title,
@@ -1754,20 +2231,634 @@ class SocialCircleApp {
       }).catch(e => console.warn('OAuth calendar sync note:', e));
     }
 
-    // 4. Keep Orbit in sync: Record promised callback & update timeline
-    if (contact) {
-      contact.promisedCall = {
-        isPromised: true,
-        deadline: startDate.toISOString(),
-        reason: title
-      };
-      this.saveContacts();
-      this.render();
-      this.showToast(`📅 Scheduled with ${contact.name}! Opening Google Calendar...`, 'success');
-      this.playChimeSound();
+    this.playChimeSound();
+    this.closeModal('calendarModal');
+    this.switchView('calendar');
+  }
+
+  // ========================================================================
+  // PHONE CONTACTS & CALL LOGS ENGINE
+  // ========================================================================
+
+  initNativePhoneIntegration() {
+    // 1. Listen for native Android contact picker result
+    window.onNativeContactPicked = (contact) => {
+      if (!contact) return;
+      this.applyPickedContact(contact);
+    };
+
+    // 2. Listen for permission grant callbacks
+    window.onNativeContactsPermissionResult = (granted) => {
+      if (granted) {
+        this.showToast('📱 Device contacts access granted!', 'success');
+        this.loadDeviceContacts();
+      } else {
+        this.showToast('Contacts permission was denied.', 'warning');
+      }
+    };
+
+    window.onNativeCallLogPermissionResult = (granted) => {
+      if (granted) {
+        this.showToast('📞 Call log access granted!', 'success');
+        this.renderCallLogs();
+        this.updateCallLogsBadges();
+      } else {
+        this.showToast('Call log permission was denied.', 'warning');
+      }
+    };
+
+    window.onNativeAllPermissionsResult = () => {
+      this.showToast('All phone permissions granted!', 'success');
+      this.renderCallLogs();
+      this.updateCallLogsBadges();
+    };
+
+    // Initial check for unlogged calls badge
+    setTimeout(() => {
+      this.updateCallLogsBadges();
+    }, 1000);
+  }
+
+  normalizePhoneNumber(phone) {
+    if (!phone) return '';
+    const digits = String(phone).replace(/\D/g, '');
+    return digits.length >= 7 ? digits.slice(-7) : digits;
+  }
+
+  findContactByPhone(phone) {
+    if (!phone) return null;
+    const target = this.normalizePhoneNumber(phone);
+    if (!target || target.length < 5) return null;
+    return this.contacts.find(c => {
+      if (!c.phone) return false;
+      const cNorm = this.normalizePhoneNumber(c.phone);
+      return cNorm === target || (cNorm.length >= 7 && target.length >= 7 && (cNorm.endsWith(target) || target.endsWith(cNorm)));
+    });
+  }
+
+  formatDuration(seconds) {
+    const sec = parseInt(seconds, 10) || 0;
+    if (sec <= 0) return '0s';
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    if (m > 0) return `${m}m ${s > 0 ? s + 's' : ''}`.trim();
+    return `${s}s`;
+  }
+
+  // Pick contact using native Android picker or Web Contacts API
+  pickContactFromPhone() {
+    if (window.AndroidBridge && typeof window.AndroidBridge.pickContact === 'function') {
+      try {
+        window.AndroidBridge.pickContact();
+        return;
+      } catch (e) {
+        console.warn('AndroidBridge.pickContact error:', e);
+      }
     }
 
-    this.closeModal('calendarModal');
+    if (navigator.contacts && 'select' in navigator.contacts) {
+      navigator.contacts.select(['name', 'tel'], { multiple: false })
+        .then(contacts => {
+          if (contacts && contacts.length > 0) {
+            const c = contacts[0];
+            const name = (c.name && c.name[0]) || '';
+            const phone = (c.tel && c.tel[0]) || '';
+            this.applyPickedContact({ name, phone });
+          }
+        })
+        .catch(() => {
+          this.openDeviceContactsModal();
+        });
+      return;
+    }
+
+    this.openDeviceContactsModal();
+  }
+
+  applyPickedContact(contact) {
+    if (!contact) return;
+    const modal = document.getElementById('contactModal');
+    if (!modal || modal.style.display === 'none') {
+      this.openAddEditContactModal(null, {
+        name: contact.name || '',
+        phone: contact.phone || ''
+      });
+    } else {
+      if (contact.name) document.getElementById('formName').value = contact.name;
+      if (contact.phone) document.getElementById('formPhone').value = contact.phone;
+      const circleSel = document.getElementById('formCircle');
+      if (circleSel) circleSel.focus();
+    }
+    this.showToast(`📱 Picked: ${contact.name || contact.phone}`, 'success');
+  }
+
+  openDeviceContactsModal() {
+    const modal = document.getElementById('deviceContactsModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    this.loadDeviceContacts();
+  }
+
+  loadDeviceContacts(filterText = '') {
+    const list = document.getElementById('deviceContactsList');
+    const notice = document.getElementById('deviceContactsStatusNotice');
+    if (!list) return;
+
+    let deviceContacts = [];
+
+    if (window.AndroidBridge && typeof window.AndroidBridge.getDeviceContacts === 'function') {
+      try {
+        const raw = window.AndroidBridge.getDeviceContacts(300);
+        deviceContacts = JSON.parse(raw);
+      } catch (e) {
+        console.warn('Error reading device contacts:', e);
+      }
+    }
+
+    // Fallback: If running on browser without native contacts or empty
+    if (!deviceContacts || deviceContacts.length === 0) {
+      if (notice) {
+        notice.style.display = 'block';
+        notice.innerHTML = `
+          <div class="calendar-sync-notice" style="margin-bottom:0.5rem;">
+            <span>ℹ️ <strong>Address Book:</strong> On Android devices, contacts are loaded directly from your phone. Below are demo/sample contacts you can easily import.</span>
+          </div>
+        `;
+      }
+      deviceContacts = [
+        { name: 'Sarah Miller', phone: '+1 555-0819' },
+        { name: 'Liam O\'Connor', phone: '+1 555-0422' },
+        { name: 'Chloe Dubois', phone: '+1 555-0633' },
+        { name: 'Tariq Hassan', phone: '+1 555-0744' },
+        { name: 'Maya Lin', phone: '+1 555-0955' }
+      ];
+    } else {
+      if (notice) notice.style.display = 'none';
+    }
+
+    if (filterText) {
+      const q = filterText.toLowerCase();
+      deviceContacts = deviceContacts.filter(c => 
+        (c.name && c.name.toLowerCase().includes(q)) || 
+        (c.phone && c.phone.includes(q))
+      );
+    }
+
+    if (deviceContacts.length === 0) {
+      list.innerHTML = `<div class="empty-state" style="padding:1.5rem;"><p>No contacts found matching "${this.escapeHtml(filterText)}".</p></div>`;
+      return;
+    }
+
+    list.innerHTML = deviceContacts.map(c => {
+      const existing = this.findContactByPhone(c.phone);
+      return `
+        <div class="device-contact-card">
+          <div class="device-contact-left">
+            <div class="avatar" style="width:38px; height:38px; border-radius:50%; background:${this.getAvatarGradient(c.name || 'Friend')}; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:bold; font-size:0.85rem; flex-shrink:0;">
+              ${this.getInitials(c.name || 'Friend')}
+            </div>
+            <div class="device-contact-details">
+              <h4>
+                ${this.escapeHtml(c.name || 'Unknown Name')}
+                ${existing ? `<span class="call-status-tag tag-friend">In Orbit (${CIRCLE_LABELS[existing.circle]?.label || 'Friend'})</span>` : ''}
+              </h4>
+              <div class="device-contact-meta">
+                <span>📞 ${this.escapeHtml(c.phone)}</span>
+              </div>
+            </div>
+          </div>
+          <div class="device-contact-actions">
+            ${existing ? `
+              <button class="btn btn-sm btn-ghost" disabled>✓ Added</button>
+            ` : `
+              <button class="btn btn-sm btn-primary btn-add-device-contact" data-name="${this.escapeHtml(c.name)}" data-phone="${this.escapeHtml(c.phone)}">
+                ➕ Add Friend
+              </button>
+            `}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    list.querySelectorAll('.btn-add-device-contact').forEach(btn => {
+      btn.onclick = () => {
+        const name = btn.dataset.name;
+        const phone = btn.dataset.phone;
+        this.closeModal('deviceContactsModal');
+        this.openAddEditContactModal(null, { name, phone });
+      };
+    });
+  }
+
+  // Read call logs from native bridge or fallback
+  getDeviceCallLogs(limit = 100) {
+    if (window.AndroidBridge && typeof window.AndroidBridge.getRecentCallLogs === 'function') {
+      try {
+        const raw = window.AndroidBridge.getRecentCallLogs(limit);
+        let parsed = null;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (jsonErr) {
+          console.warn('Bridge getRecentCallLogs parse error:', jsonErr);
+        }
+
+        if (parsed) {
+          if (Array.isArray(parsed)) {
+            return {
+              permissionGranted: true,
+              calls: parsed,
+              isNative: true
+            };
+          }
+          if (parsed.calls && Array.isArray(parsed.calls)) {
+            return {
+              permissionGranted: parsed.permissionGranted !== false,
+              calls: parsed.calls,
+              isNative: true,
+              error: parsed.error || null
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('Error fetching native call logs:', e);
+      }
+      return {
+        permissionGranted: false,
+        calls: [],
+        isNative: true
+      };
+    }
+
+    // Web Fallback Demo Call Logs (only when previewing on web without AndroidBridge)
+    const now = Date.now();
+    return {
+      permissionGranted: true,
+      isNative: false,
+      calls: [
+        {
+          number: '+1 555-0144',
+          cachedName: 'Marcus Vance',
+          type: 'call',
+          direction: 'them',
+          date: now - 3 * 3600 * 1000,
+          duration: 840
+        },
+        {
+          number: '+1 555-0891',
+          cachedName: 'Elena Rostova',
+          type: 'call',
+          direction: 'me',
+          date: now - 26 * 3600 * 1000,
+          duration: 1250
+        },
+        {
+          number: '+1 555-0329',
+          cachedName: 'David Kim',
+          type: 'missed',
+          direction: 'them',
+          date: now - 48 * 3600 * 1000,
+          duration: 0
+        },
+        {
+          number: '+1 555-9182',
+          cachedName: 'Jordan Taylor',
+          type: 'call',
+          direction: 'them',
+          date: now - 72 * 3600 * 1000,
+          duration: 320
+        }
+      ]
+    };
+  }
+
+  openCallLogsModal() {
+    const modal = document.getElementById('callLogsModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    this.renderCallLogs();
+  }
+
+  renderCallLogs(filter = null) {
+    const list = document.getElementById('callLogsList');
+    const notice = document.getElementById('callLogsStatusNotice');
+    const filterSelect = document.getElementById('callLogsFilter');
+    if (!list) return;
+
+    const currentFilter = filter || (filterSelect ? filterSelect.value : 'unlogged');
+    const logResult = this.getDeviceCallLogs(100);
+    const rawCalls = (logResult && logResult.calls) ? logResult.calls : [];
+
+    if (notice) {
+      if (logResult.isNative && !logResult.permissionGranted) {
+        notice.style.display = 'block';
+        notice.innerHTML = `
+          <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+              <div>
+                <strong style="color: #f59e0b; display: block; margin-bottom: 2px;">🔒 Call Log Permission Required</strong>
+                <span style="font-size: 0.82rem; color: var(--text-secondary);">Orbit needs call log permission to show your phone calls and match with friends.</span>
+              </div>
+              <button type="button" id="btnRequestCallPermPrompt" class="btn btn-sm btn-primary" style="white-space: nowrap;">
+                📱 Grant Permission
+              </button>
+            </div>
+          </div>
+        `;
+        const permBtn = document.getElementById('btnRequestCallPermPrompt');
+        if (permBtn && window.AndroidBridge && window.AndroidBridge.requestCallLogPermission) {
+          permBtn.onclick = () => window.AndroidBridge.requestCallLogPermission();
+        }
+      } else if (!logResult.isNative) {
+        notice.style.display = 'block';
+        notice.innerHTML = `
+          <div class="calendar-sync-notice">
+            <span>ℹ️ <strong>Web Demo Calls:</strong> When installed on Android, Orbit automatically reads real phone call logs. Below is demo call history for web preview.</span>
+          </div>
+        `;
+      } else {
+        notice.style.display = 'none';
+      }
+    }
+
+    let callsWithStatus = rawCalls.map(call => {
+      const matchedContact = this.findContactByPhone(call.number);
+      let isLogged = false;
+      if (matchedContact && Array.isArray(matchedContact.interactions)) {
+        isLogged = matchedContact.interactions.some(i => {
+          if (i.callLogDate && i.callLogDate === call.date) return true;
+          const iDate = new Date(i.date).getTime();
+          return Math.abs(iDate - call.date) < 180000;
+        });
+      }
+      return {
+        ...call,
+        matchedContact,
+        isLogged
+      };
+    });
+
+    // Apply Filter
+    if (currentFilter === 'friends') {
+      callsWithStatus = callsWithStatus.filter(c => c.matchedContact);
+    } else if (currentFilter === 'unlogged') {
+      callsWithStatus = callsWithStatus.filter(c => c.matchedContact && !c.isLogged);
+    } else if (currentFilter === 'missed') {
+      callsWithStatus = callsWithStatus.filter(c => c.type === 'missed');
+    } else if (currentFilter === 'unknown') {
+      callsWithStatus = callsWithStatus.filter(c => !c.matchedContact);
+    }
+
+    if (callsWithStatus.length === 0) {
+      list.innerHTML = `
+        <div class="empty-state" style="padding: 2.5rem 1rem; text-align: center;">
+          <div class="empty-illustration" style="font-size: 2.5rem; margin-bottom: 0.5rem;">📞</div>
+          <h3 style="margin-bottom: 0.25rem;">
+            ${logResult.isNative && !logResult.permissionGranted ? 'Call Log Permission Required' : 'No calls matching filter'}
+          </h3>
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+            ${logResult.isNative && !logResult.permissionGranted ? 'Tap "Grant Permission" above to load your recent calls.' : 'Make or receive phone calls on your phone to log them with friends.'}
+          </p>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="orbit.renderCallLogs()">🔄 Refresh Call Logs</button>
+        </div>
+      `;
+      return;
+    }
+
+    list.innerHTML = callsWithStatus.map((call, idx) => {
+      const d = new Date(call.date);
+      const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      const isMissed = call.type === 'missed';
+      const isIncoming = call.direction === 'them' && !isMissed;
+      const isOutgoing = call.direction === 'me' && !isMissed;
+
+      let iconClass = 'call-icon-outgoing';
+      let iconSymbol = '📤';
+      let typeLabel = 'Outgoing Call';
+
+      if (isIncoming) {
+        iconClass = 'call-icon-incoming';
+        iconSymbol = '📥';
+        typeLabel = 'Incoming Call';
+      } else if (isMissed) {
+        iconClass = 'call-icon-missed';
+        iconSymbol = '📵';
+        typeLabel = 'Missed Call';
+      }
+
+      const displayName = call.matchedContact ? call.matchedContact.name : (call.cachedName || call.number);
+
+      return `
+        <div class="call-log-card" data-index="${idx}">
+          <div class="call-log-left">
+            <div class="call-icon-badge ${iconClass}">
+              <span>${iconSymbol}</span>
+            </div>
+            <div class="call-details">
+              <h4>
+                ${this.escapeHtml(displayName)}
+                ${call.matchedContact ? `
+                  <span class="call-status-tag tag-friend">👤 ${this.escapeHtml(CIRCLE_LABELS[call.matchedContact.circle]?.label || 'Friend')}</span>
+                ` : `
+                  <span class="call-status-tag tag-new">New Number</span>
+                `}
+                ${call.isLogged ? `
+                  <span class="call-status-tag tag-logged">✓ Logged</span>
+                ` : ''}
+              </h4>
+              <div class="call-meta">
+                <span>${typeLabel}</span>
+                <span>•</span>
+                <span>📅 ${dateStr} at ${timeStr}</span>
+                <span>•</span>
+                <span>⏱️ ${isMissed ? 'No answer' : this.formatDuration(call.duration)}</span>
+                ${call.matchedContact && call.matchedContact.phone !== call.number ? `<span>• 📞 ${this.escapeHtml(call.number)}</span>` : ''}
+              </div>
+            </div>
+          </div>
+          <div class="call-actions">
+            ${call.matchedContact ? (
+              call.isLogged ? `
+                <button class="btn btn-sm btn-ghost" disabled>✓ In Orbit</button>
+              ` : (
+                isMissed ? `
+                  <button class="btn btn-sm btn-secondary btn-log-missed-call" data-contact-id="${call.matchedContact.id}" data-date="${call.date}" title="Set callback reminder for missed call">
+                    ⏳ Owe Call
+                  </button>
+                ` : `
+                  <button class="btn btn-sm btn-primary btn-quick-log-call" data-contact-id="${call.matchedContact.id}" data-direction="${call.direction}" data-duration="${call.duration}" data-date="${call.date}">
+                    ⚡ Log Catch-up
+                  </button>
+                `
+              )
+            ) : `
+              <button class="btn btn-sm btn-secondary btn-add-friend-from-call" data-name="${this.escapeHtml(call.cachedName || '')}" data-phone="${this.escapeHtml(call.number)}" data-date="${call.date}">
+                ➕ Add Friend
+              </button>
+            `}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Bind action buttons
+    list.querySelectorAll('.btn-quick-log-call').forEach(btn => {
+      btn.onclick = () => {
+        const contactId = btn.dataset.contactId;
+        const direction = btn.dataset.direction;
+        const duration = parseInt(btn.dataset.duration, 10);
+        const date = parseInt(btn.dataset.date, 10);
+        this.logCallInteraction({ contactId, direction, duration, date });
+        this.renderCallLogs();
+      };
+    });
+
+    list.querySelectorAll('.btn-log-missed-call').forEach(btn => {
+      btn.onclick = () => {
+        const contactId = btn.dataset.contactId;
+        const date = parseInt(btn.dataset.date, 10);
+        const contact = this.contacts.find(c => c.id === contactId);
+        if (contact) {
+          contact.promisedCall = {
+            isPromised: true,
+            deadline: new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
+            reason: `Missed call on ${new Date(date).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}`
+          };
+          this.saveContacts();
+          this.render();
+          this.showToast(`⏳ Set callback reminder for ${contact.name}!`, 'warning');
+          this.renderCallLogs();
+        }
+      };
+    });
+
+    list.querySelectorAll('.btn-add-friend-from-call').forEach(btn => {
+      btn.onclick = () => {
+        const name = btn.dataset.name;
+        const phone = btn.dataset.phone;
+        const date = parseInt(btn.dataset.date, 10);
+        this.closeModal('callLogsModal');
+        this.openAddEditContactModal(null, {
+          name: name || '',
+          phone: phone || '',
+          notes: `Added from call log (${new Date(date).toLocaleDateString()})`
+        });
+      };
+    });
+  }
+
+  logCallInteraction({ contactId, direction, duration, date }) {
+    const contact = this.contacts.find(c => c.id === contactId);
+    if (!contact) return;
+
+    const durSec = duration || 0;
+    const isThey = direction === 'them';
+    const xpGained = 25 + (isThey ? 15 : 0);
+
+    const interaction = {
+      id: 'i_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+      type: 'call',
+      initiator: direction,
+      date: new Date(date).toISOString(),
+      mood: durSec > 300 ? 'great' : (durSec > 60 ? 'good' : 'quick'),
+      summary: `${isThey ? 'Incoming' : 'Outgoing'} phone call (${this.formatDuration(durSec)})`,
+      nextTopics: contact.nextTopicsToAsk || '',
+      callLogDate: date
+    };
+
+    if (!Array.isArray(contact.interactions)) contact.interactions = [];
+    contact.interactions.unshift(interaction);
+    contact.currentXp = Math.min(1000, (contact.currentXp || 0) + xpGained);
+
+    // If promise was active, fulfill it
+    if (contact.promisedCall && contact.promisedCall.isPromised) {
+      contact.promisedCall = null;
+    }
+
+    this.saveContacts();
+    this.render();
+    this.showToast(`📞 Logged call with ${contact.name}! (+${xpGained} XP)`, 'success');
+    this.playLevelUpSound();
+    this.updateCallLogsBadges();
+  }
+
+  autoSyncUnloggedCalls() {
+    const logRes = this.getDeviceCallLogs(100);
+    const rawCalls = (logRes && logRes.calls) ? logRes.calls : [];
+    let count = 0;
+
+    rawCalls.forEach(call => {
+      if (call.type === 'missed') return;
+      const contact = this.findContactByPhone(call.number);
+      if (!contact) return;
+
+      if (!Array.isArray(contact.interactions)) contact.interactions = [];
+      const isAlreadyLogged = contact.interactions.some(i => {
+        if (i.callLogDate && i.callLogDate === call.date) return true;
+        const iDate = new Date(i.date).getTime();
+        return Math.abs(iDate - call.date) < 180000;
+      });
+
+      if (!isAlreadyLogged) {
+        const isThey = call.direction === 'them';
+        const xpGained = 25 + (isThey ? 15 : 0);
+        contact.interactions.unshift({
+          id: 'i_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+          type: 'call',
+          initiator: call.direction,
+          date: new Date(call.date).toISOString(),
+          mood: call.duration > 300 ? 'great' : 'good',
+          summary: `${isThey ? 'Incoming' : 'Outgoing'} call (${this.formatDuration(call.duration)})`,
+          nextTopics: contact.nextTopicsToAsk || '',
+          callLogDate: call.date
+        });
+        contact.currentXp = Math.min(1000, (contact.currentXp || 0) + xpGained);
+        if (contact.promisedCall) contact.promisedCall = null;
+        count++;
+      }
+    });
+
+    if (count > 0) {
+      this.saveContacts();
+      this.render();
+      this.renderCallLogs();
+      this.updateCallLogsBadges();
+      this.showToast(`⚡ Automatically logged ${count} calls from phone history!`, 'success');
+      this.playLevelUpSound();
+    } else {
+      this.showToast('All calls with friends are already up to date!', 'info');
+    }
+  }
+
+  updateCallLogsBadges() {
+    const logRes = this.getDeviceCallLogs(100);
+    const rawCalls = (logRes && logRes.calls) ? logRes.calls : [];
+    let unloggedCount = 0;
+
+    rawCalls.forEach(call => {
+      const contact = this.findContactByPhone(call.number);
+      if (!contact) return;
+      if (!Array.isArray(contact.interactions)) return;
+
+      const isLogged = contact.interactions.some(i => {
+        if (i.callLogDate && i.callLogDate === call.date) return true;
+        const iDate = new Date(i.date).getTime();
+        return Math.abs(iDate - call.date) < 180000;
+      });
+      if (!isLogged) unloggedCount++;
+    });
+
+    const headerBadge = document.getElementById('headerCallLogsBadge');
+    if (headerBadge) {
+      headerBadge.textContent = unloggedCount;
+      headerBadge.style.display = unloggedCount > 0 ? 'inline-block' : 'none';
+    }
+
+    const mobileBadge = document.getElementById('mobileCallLogsBadge');
+    if (mobileBadge) {
+      mobileBadge.textContent = unloggedCount;
+      mobileBadge.style.display = unloggedCount > 0 ? 'inline-block' : 'none';
+    }
   }
 
   // ========================================================================
@@ -1780,6 +2871,70 @@ class SocialCircleApp {
     document.getElementById('emptyAddBtn').onclick = () => this.openAddEditContactModal();
     document.getElementById('quickLogBtn').onclick = () => this.openLogInteractionModal();
     document.getElementById('themeToggleBtn').onclick = () => this.toggleTheme();
+
+    // Call Logs & Contact Picker top/mobile bindings
+    const headerCallLogsBtn = document.getElementById('headerCallLogsBtn');
+    if (headerCallLogsBtn) {
+      headerCallLogsBtn.onclick = () => this.openCallLogsModal();
+    }
+
+    const mobileCallLogsBtn = document.getElementById('mobileActionCallLogs');
+    if (mobileCallLogsBtn) {
+      mobileCallLogsBtn.onclick = () => this.openCallLogsModal();
+    }
+
+    const btnPickPhone = document.getElementById('btnPickPhoneContact');
+    if (btnPickPhone) {
+      btnPickPhone.onclick = () => this.pickContactFromPhone();
+    }
+
+    const btnBrowseContacts = document.getElementById('btnBrowsePhoneContacts');
+    if (btnBrowseContacts) {
+      btnBrowseContacts.onclick = () => this.openDeviceContactsModal();
+    }
+
+    const devSearch = document.getElementById('deviceContactsSearch');
+    if (devSearch) {
+      devSearch.oninput = (e) => this.loadDeviceContacts(e.target.value.trim());
+    }
+
+    const btnAutoSync = document.getElementById('btnAutoSyncCallLogs');
+    if (btnAutoSync) {
+      btnAutoSync.onclick = () => this.autoSyncUnloggedCalls();
+    }
+
+    const btnRefreshCalls = document.getElementById('btnRefreshCallLogs');
+    if (btnRefreshCalls) {
+      btnRefreshCalls.onclick = () => {
+        this.renderCallLogs();
+        this.showToast('🔄 Refreshed phone call logs', 'info');
+      };
+    }
+
+    const callLogsFilter = document.getElementById('callLogsFilter');
+    if (callLogsFilter) {
+      callLogsFilter.onchange = (e) => this.renderCallLogs(e.target.value);
+    }
+
+    const btnPickCallForInter = document.getElementById('btnPickFromCallLogsForInteraction');
+    if (btnPickCallForInter) {
+      btnPickCallForInter.onclick = () => {
+        this.closeModal('interactionModal');
+        this.openCallLogsModal();
+      };
+    }
+
+    // Desktop Header Calendar Button
+    const headerCalBtn = document.getElementById('headerCalendarBtn');
+    if (headerCalBtn) {
+      headerCalBtn.onclick = () => this.switchView('calendar');
+    }
+
+    // Calendar Section "Schedule New Program" Button
+    const btnNewProg = document.getElementById('btnScheduleNewProgram');
+    if (btnNewProg) {
+      btnNewProg.onclick = () => this.openCalendarModal();
+    }
 
     // Mobile quick action bar
     const mobileActionAdd = document.getElementById('mobileActionAddFriend');
@@ -1879,13 +3034,17 @@ class SocialCircleApp {
     document.getElementById('loadSampleDataBtn').onclick = () => this.resetSampleData();
     document.getElementById('clearAllDataBtn').onclick = () => this.clearAllData();
 
-    // Circle tab filters
+    // Circle tab filters & Calendar View
     document.querySelectorAll('.circle-tab').forEach(tab => {
       tab.onclick = () => {
+        if (tab.dataset.circle === 'calendar') {
+          this.switchView('calendar');
+          return;
+        }
         document.querySelectorAll('.circle-tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         this.currentCircleFilter = tab.dataset.circle;
-        this.renderContactsGrid();
+        this.switchView('circles');
       };
     });
 
@@ -2096,8 +3255,10 @@ class SocialCircleApp {
 
     const btnRestoreFromGoogleDrive = document.getElementById('btnRestoreFromGoogleDrive');
     const googleDriveRestoreInput = document.getElementById('googleDriveRestoreInput');
-    if (btnRestoreFromGoogleDrive && googleDriveRestoreInput) {
-      btnRestoreFromGoogleDrive.onclick = () => googleDriveRestoreInput.click();
+    if (btnRestoreFromGoogleDrive) {
+      btnRestoreFromGoogleDrive.onclick = () => this.googleSync.triggerRestoreGoogleDrive();
+    }
+    if (googleDriveRestoreInput) {
       googleDriveRestoreInput.onchange = (e) => {
         if (e.target.files && e.target.files[0]) {
           this.googleSync.restoreGoogleDriveBackup(e.target.files[0]);
@@ -2195,6 +3356,7 @@ class SocialCircleApp {
         const navTarget = item.dataset.nav;
 
         if (navTarget === 'circle') {
+          this.switchView('circles');
           this.currentCircleFilter = 'all';
           this.currentStatusFilter = 'all';
           document.querySelectorAll('.circle-tab').forEach(t => t.classList.remove('active'));
@@ -2204,6 +3366,7 @@ class SocialCircleApp {
           this.renderContactsGrid();
           window.scrollTo({ top: 0, behavior: 'smooth' });
         } else if (navTarget === 'callbacks') {
+          this.switchView('circles');
           this.currentStatusFilter = 'owe_call';
           document.getElementById('statusFilterSelect').value = 'owe_call';
           this.renderContactsGrid();
@@ -2212,7 +3375,7 @@ class SocialCircleApp {
             deck.scrollIntoView({ behavior: 'smooth' });
           }
         } else if (navTarget === 'calendar') {
-          this.openCalendarModal();
+          this.switchView('calendar');
         } else if (navTarget === 'settings') {
           document.getElementById('dataSettingsModal').style.display = 'flex';
         }
@@ -2221,7 +3384,7 @@ class SocialCircleApp {
 
     const mobileNavCalendar = document.getElementById('mobileNavCalendar');
     if (mobileNavCalendar) {
-      mobileNavCalendar.onclick = () => this.openCalendarModal();
+      mobileNavCalendar.onclick = () => this.switchView('calendar');
     }
 
     const mobileFabAdd = document.getElementById('mobileFabAdd');

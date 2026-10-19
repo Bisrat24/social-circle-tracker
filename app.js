@@ -8,6 +8,8 @@
 // CONFIGURATION & CONSTANTS
 // ==========================================================================
 
+const APP_VERSION = '1.0.1';
+
 const LEVEL_DEFINITIONS = [
   { level: 1, title: 'Acquaintance', minXp: 0, maxXp: 99, colorClass: 'lvl-1' },
   { level: 2, title: 'Familiar Face', minXp: 100, maxXp: 199, colorClass: 'lvl-2' },
@@ -1148,7 +1150,8 @@ class SocialCircleApp {
     const targetContact = this.contacts.find(c => c.id === targetContactId);
 
     if (suggestionBox && targetContact && targetContact.phone && !callPrefill) {
-      const calls = this.getDeviceCallLogs(20);
+      const logRes = this.getDeviceCallLogs(20);
+      const calls = (logRes && logRes.calls) ? logRes.calls : [];
       const recentCall = calls.find(call => {
         return this.normalizePhoneNumber(call.number) === this.normalizePhoneNumber(targetContact.phone);
       });
@@ -1462,6 +1465,12 @@ class SocialCircleApp {
       this.closeModal('profileModal');
       this.openAddEditContactModal(contact.id);
     };
+    const profDeleteBtn = document.getElementById('profDeleteBtn');
+    if (profDeleteBtn) {
+      profDeleteBtn.onclick = () => {
+        this.deleteFriend(contact.id);
+      };
+    }
 
     // Timeline history
     const timelineList = document.getElementById('profTimelineList');
@@ -1526,11 +1535,17 @@ class SocialCircleApp {
 
     slider.oninput = (e) => updateSliderUI(e.target.value);
 
+    const btnDelete = document.getElementById('btnDeleteFriendFromModal');
+
     if (contactId) {
       const contact = this.contacts.find(c => c.id === contactId);
       if (!contact) return;
       title.textContent = 'Edit Friend';
       if (importActions) importActions.style.display = 'none';
+      if (btnDelete) {
+        btnDelete.style.display = 'inline-flex';
+        btnDelete.onclick = () => this.deleteFriend(contact.id);
+      }
       document.getElementById('editContactId').value = contact.id;
       document.getElementById('formName').value = contact.name;
       document.getElementById('formNickname').value = contact.nickname || '';
@@ -1548,6 +1563,10 @@ class SocialCircleApp {
     } else {
       title.textContent = 'Add New Friend';
       if (importActions) importActions.style.display = 'flex';
+      if (btnDelete) {
+        btnDelete.style.display = 'none';
+        btnDelete.onclick = null;
+      }
       document.getElementById('editContactId').value = '';
       if (prefill) {
         if (prefill.name) document.getElementById('formName').value = prefill.name;
@@ -1622,6 +1641,24 @@ class SocialCircleApp {
     this.saveContacts();
     this.closeModal('contactModal');
     this.render();
+  }
+
+  deleteFriend(contactId) {
+    const contact = this.contacts.find(c => c.id === contactId);
+    if (!contact) return;
+    if (!confirm(`Are you sure you want to remove "${contact.name}" from your Orbit circle?`)) {
+      return;
+    }
+    const name = contact.name;
+    this.contacts = this.contacts.filter(c => c.id !== contactId);
+    this.saveContacts();
+    this.closeModal('contactModal');
+    this.closeModal('profileModal');
+    this.render();
+    if (this.googleSync && typeof this.googleSync.scheduleAutoSync === 'function') {
+      this.googleSync.scheduleAutoSync();
+    }
+    this.showToast(`Removed "${name}" from your circle.`, 'info');
   }
 
   // ========================================================================
@@ -2418,51 +2455,80 @@ class SocialCircleApp {
     if (window.AndroidBridge && typeof window.AndroidBridge.getRecentCallLogs === 'function') {
       try {
         const raw = window.AndroidBridge.getRecentCallLogs(limit);
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+        let parsed = null;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (jsonErr) {
+          console.warn('Bridge getRecentCallLogs parse error:', jsonErr);
+        }
+
+        if (parsed) {
+          if (Array.isArray(parsed)) {
+            return {
+              permissionGranted: true,
+              calls: parsed,
+              isNative: true
+            };
+          }
+          if (parsed.calls && Array.isArray(parsed.calls)) {
+            return {
+              permissionGranted: parsed.permissionGranted !== false,
+              calls: parsed.calls,
+              isNative: true,
+              error: parsed.error || null
+            };
+          }
         }
       } catch (e) {
         console.warn('Error fetching native call logs:', e);
       }
+      return {
+        permissionGranted: false,
+        calls: [],
+        isNative: true
+      };
     }
 
-    // Web Fallback Demo Call Logs
+    // Web Fallback Demo Call Logs (only when previewing on web without AndroidBridge)
     const now = Date.now();
-    return [
-      {
-        number: '+1 555-0144',
-        cachedName: 'Marcus Vance',
-        type: 'call',
-        direction: 'them',
-        date: now - 3 * 3600 * 1000,
-        duration: 840
-      },
-      {
-        number: '+1 555-0891',
-        cachedName: 'Elena Rostova',
-        type: 'call',
-        direction: 'me',
-        date: now - 26 * 3600 * 1000,
-        duration: 1250
-      },
-      {
-        number: '+1 555-0329',
-        cachedName: 'David Kim',
-        type: 'missed',
-        direction: 'them',
-        date: now - 48 * 3600 * 1000,
-        duration: 0
-      },
-      {
-        number: '+1 555-9182',
-        cachedName: 'Jordan Taylor',
-        type: 'call',
-        direction: 'them',
-        date: now - 72 * 3600 * 1000,
-        duration: 320
-      }
-    ];
+    return {
+      permissionGranted: true,
+      isNative: false,
+      calls: [
+        {
+          number: '+1 555-0144',
+          cachedName: 'Marcus Vance',
+          type: 'call',
+          direction: 'them',
+          date: now - 3 * 3600 * 1000,
+          duration: 840
+        },
+        {
+          number: '+1 555-0891',
+          cachedName: 'Elena Rostova',
+          type: 'call',
+          direction: 'me',
+          date: now - 26 * 3600 * 1000,
+          duration: 1250
+        },
+        {
+          number: '+1 555-0329',
+          cachedName: 'David Kim',
+          type: 'missed',
+          direction: 'them',
+          date: now - 48 * 3600 * 1000,
+          duration: 0
+        },
+        {
+          number: '+1 555-9182',
+          cachedName: 'Jordan Taylor',
+          type: 'call',
+          direction: 'them',
+          date: now - 72 * 3600 * 1000,
+          duration: 320
+        }
+      ]
+    };
   }
 
   openCallLogsModal() {
@@ -2479,18 +2545,39 @@ class SocialCircleApp {
     if (!list) return;
 
     const currentFilter = filter || (filterSelect ? filterSelect.value : 'unlogged');
-    const rawCalls = this.getDeviceCallLogs(100);
+    const logResult = this.getDeviceCallLogs(100);
+    const rawCalls = (logResult && logResult.calls) ? logResult.calls : [];
 
-    const isNativeAndroid = !!(window.AndroidBridge && typeof window.AndroidBridge.getRecentCallLogs === 'function');
-    if (!isNativeAndroid && notice) {
-      notice.style.display = 'block';
-      notice.innerHTML = `
-        <div class="calendar-sync-notice">
-          <span>ℹ️ <strong>Call Logs:</strong> On your Android device, Orbit syncs real phone call logs. Below is your active call history ready to log or auto-sync.</span>
-        </div>
-      `;
-    } else if (notice) {
-      notice.style.display = 'none';
+    if (notice) {
+      if (logResult.isNative && !logResult.permissionGranted) {
+        notice.style.display = 'block';
+        notice.innerHTML = `
+          <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+              <div>
+                <strong style="color: #f59e0b; display: block; margin-bottom: 2px;">🔒 Call Log Permission Required</strong>
+                <span style="font-size: 0.82rem; color: var(--text-secondary);">Orbit needs call log permission to show your phone calls and match with friends.</span>
+              </div>
+              <button type="button" id="btnRequestCallPermPrompt" class="btn btn-sm btn-primary" style="white-space: nowrap;">
+                📱 Grant Permission
+              </button>
+            </div>
+          </div>
+        `;
+        const permBtn = document.getElementById('btnRequestCallPermPrompt');
+        if (permBtn && window.AndroidBridge && window.AndroidBridge.requestCallLogPermission) {
+          permBtn.onclick = () => window.AndroidBridge.requestCallLogPermission();
+        }
+      } else if (!logResult.isNative) {
+        notice.style.display = 'block';
+        notice.innerHTML = `
+          <div class="calendar-sync-notice">
+            <span>ℹ️ <strong>Web Demo Calls:</strong> When installed on Android, Orbit automatically reads real phone call logs. Below is demo call history for web preview.</span>
+          </div>
+        `;
+      } else {
+        notice.style.display = 'none';
+      }
     }
 
     let callsWithStatus = rawCalls.map(call => {
@@ -2523,10 +2610,15 @@ class SocialCircleApp {
 
     if (callsWithStatus.length === 0) {
       list.innerHTML = `
-        <div class="empty-state" style="padding:2rem 1rem;">
-          <div class="empty-illustration">📞</div>
-          <h3>No calls matching filter</h3>
-          <p>Change your filter above or tap "Refresh" to re-scan phone call logs.</p>
+        <div class="empty-state" style="padding: 2.5rem 1rem; text-align: center;">
+          <div class="empty-illustration" style="font-size: 2.5rem; margin-bottom: 0.5rem;">📞</div>
+          <h3 style="margin-bottom: 0.25rem;">
+            ${logResult.isNative && !logResult.permissionGranted ? 'Call Log Permission Required' : 'No calls matching filter'}
+          </h3>
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+            ${logResult.isNative && !logResult.permissionGranted ? 'Tap "Grant Permission" above to load your recent calls.' : 'Make or receive phone calls on your phone to log them with friends.'}
+          </p>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="orbit.renderCallLogs()">🔄 Refresh Call Logs</button>
         </div>
       `;
       return;
@@ -2691,7 +2783,8 @@ class SocialCircleApp {
   }
 
   autoSyncUnloggedCalls() {
-    const rawCalls = this.getDeviceCallLogs(100);
+    const logRes = this.getDeviceCallLogs(100);
+    const rawCalls = (logRes && logRes.calls) ? logRes.calls : [];
     let count = 0;
 
     rawCalls.forEach(call => {
@@ -2738,7 +2831,8 @@ class SocialCircleApp {
   }
 
   updateCallLogsBadges() {
-    const rawCalls = this.getDeviceCallLogs(100);
+    const logRes = this.getDeviceCallLogs(100);
+    const rawCalls = (logRes && logRes.calls) ? logRes.calls : [];
     let unloggedCount = 0;
 
     rawCalls.forEach(call => {
@@ -3161,8 +3255,10 @@ class SocialCircleApp {
 
     const btnRestoreFromGoogleDrive = document.getElementById('btnRestoreFromGoogleDrive');
     const googleDriveRestoreInput = document.getElementById('googleDriveRestoreInput');
-    if (btnRestoreFromGoogleDrive && googleDriveRestoreInput) {
-      btnRestoreFromGoogleDrive.onclick = () => googleDriveRestoreInput.click();
+    if (btnRestoreFromGoogleDrive) {
+      btnRestoreFromGoogleDrive.onclick = () => this.googleSync.triggerRestoreGoogleDrive();
+    }
+    if (googleDriveRestoreInput) {
       googleDriveRestoreInput.onchange = (e) => {
         if (e.target.files && e.target.files[0]) {
           this.googleSync.restoreGoogleDriveBackup(e.target.files[0]);

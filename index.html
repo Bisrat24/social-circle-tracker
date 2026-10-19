@@ -35,7 +35,7 @@
           <span class="logo-core">🪐</span>
         </div>
         <div class="brand-text">
-          <h1>Orbit</h1>
+          <h1>Orbit <span class="app-version-badge" style="font-size: 0.65rem; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: rgba(99, 102, 241, 0.18); color: var(--accent-purple); border: 1px solid rgba(99, 102, 241, 0.35); vertical-align: middle; margin-left: 4px;">v1.0.1</span></h1>
           <p class="tagline">Stay connected with the people who matter</p>
         </div>
       </div>
@@ -372,9 +372,15 @@
           <textarea id="formNotes" rows="2" placeholder="Where you met, shared memories, things they love..."></textarea>
         </div>
 
-        <div class="modal-footer">
-          <button type="button" class="btn btn-ghost" data-close="contactModal">Cancel</button>
-          <button type="submit" class="btn btn-primary">Save Friend</button>
+        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+          <button type="button" id="btnDeleteFriendFromModal" class="btn btn-danger" style="display: none; background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.35);">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+            <span>Remove Friend</span>
+          </button>
+          <div style="display: flex; gap: 8px; margin-left: auto;">
+            <button type="button" class="btn btn-ghost" data-close="contactModal">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="btnSubmitContactForm">Save Friend</button>
+          </div>
         </div>
       </form>
     </div>
@@ -651,6 +657,7 @@
               <button id="profCalendarBtn" class="btn btn-sm btn-secondary">📅 Google Calendar</button>
               <button id="profIcebreakerBtn" class="btn btn-sm btn-secondary">⚡ Icebreaker</button>
               <button id="profEditBtn" class="btn btn-sm btn-ghost">✏️ Edit</button>
+              <button id="profDeleteBtn" class="btn btn-sm btn-danger" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.35);">🗑️ Remove</button>
             </div>
           </div>
 
@@ -779,51 +786,40 @@
           <h4>Google Drive Cloud Backup & Restore</h4>
           <p class="text-sm">Save your entire social circle, levels, and notes directly to Google Drive, or restore from a previous backup:</p>
           
-          <div class="sync-drive-actions mt-2">
-            <button id="btnExportToGoogleDrive" class="btn btn-secondary">
+          <div class="sync-drive-actions mt-2" style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button id="btnExportToGoogleDrive" class="btn btn-primary">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              💾 Save Backup to Google Drive
+              <span>💾 Save Backup to Google Drive</span>
             </button>
             
-            <input type="file" id="googleDriveRestoreInput" accept=".json" style="display:none;">
+            <input type="file" id="googleDriveRestoreInput" accept=".json,application/json,text/plain" style="display:none;">
             <button id="btnRestoreFromGoogleDrive" class="btn btn-secondary">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              📥 Restore from Google Drive
+              <span>📥 Restore from Google Drive</span>
             </button>
 
-            <button id="btnSyncNowGlobal" class="btn btn-primary">🔄 Sync All Data</button>
+            <a href="https://drive.google.com/drive/my-drive" target="_blank" class="btn btn-ghost" style="text-decoration:none;">
+              <span>🌐 Open Google Drive ↗</span>
+            </a>
           </div>
         </div>
 
-        <!-- SYNC METHOD 2: REAL-TIME LOCAL WI-FI SYNC -->
+        <!-- SYNC METHOD 2: 24/7 CLOUD HOSTING & CROSS-DEVICE ACCESS -->
         <div class="sync-config-section">
-          <div class="section-badge-tag">Method 2 (Local Network)</div>
-          <h4>Real-Time PC ⇄ Android Wi-Fi Sync</h4>
-          <p class="text-sm">When your PC and Android phone are on the same Wi-Fi network, changes sync between both devices instantly.</p>
+          <div class="section-badge-tag">24/7 Cloud Access</div>
+          <h4>Cross-Device Cloud Access & APK</h4>
+          <p class="text-sm">Orbit is hosted 24/7 on high-speed HTTPS cloud hosting. Access your circle anywhere or download the native Android APK:</p>
           
-          <div class="wifi-sync-status-row">
-            <span id="wifiSyncIndicator" class="wifi-dot dot-active"></span>
-            <span id="wifiSyncStatusText">Checking local server status...</span>
-          </div>
-
           <div class="wifi-sync-details mt-2">
             <div class="wifi-ip-badge highlight-badge" style="background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.4); padding: 12px; border-radius: 10px;">
-              <div style="font-weight: 700; color: #a5b4fc; margin-bottom: 6px;">🚀 Instant Android App Link (Bypasses Firewall & Router Isolation):</div>
-              <code id="androidHttpsUrl" style="font-size: 1.1rem; color: #38bdf8; word-break: break-all;">https://00193578f9cdd1.lhr.life</code>
-              <div class="mt-2">
-                <button type="button" id="btnCopyHttpsUrl" class="btn btn-xs btn-primary" onclick="navigator.clipboard.writeText('https://00193578f9cdd1.lhr.life'); alert('Copied mobile link to clipboard!');">📋 Copy Phone Link</button>
+              <div style="font-weight: 700; color: #a5b4fc; margin-bottom: 6px;">🚀 Live Cloud Web App:</div>
+              <code id="activeCloudAppUrl" style="font-size: 1.05rem; color: #38bdf8; word-break: break-all;">https://brazen-lint-meyv3.ship.place/</code>
+              <div class="mt-2" style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <a href="https://brazen-lint-meyv3.ship.place/" target="_blank" class="btn btn-xs btn-primary" style="text-decoration:none;">🌐 Open Cloud App</a>
+                <a href="https://brazen-lint-meyv3.ship.place/Orbit.apk" download class="btn btn-xs btn-secondary" style="text-decoration:none;">📱 Download Orbit.apk</a>
               </div>
             </div>
-            <div class="wifi-ip-badge mt-2" style="font-size: 0.85rem; opacity: 0.75; padding: 6px 10px;">
-              <span>📶 Local Wi-Fi Direct:</span>
-              <code id="androidWifiSyncUrl">http://192.168.1.6:5000/</code>
-            </div>
           </div>
-
-          <div class="sync-action-row mt-2">
-            <button id="btnForceWifiSync" class="btn btn-secondary btn-sm">🔄 Sync Data Now</button>
-          </div>
-        </div>
 
         <!-- SYNC METHOD 3: ADVANCED GOOGLE CLOUD OAUTH2 CLIENT -->
         <details class="sync-config-section setup-guide-box">

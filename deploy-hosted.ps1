@@ -10,9 +10,28 @@ Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   Deploying Orbit to Free Cloud Hosting  " -ForegroundColor Yellow
 Write-Host "==========================================" -ForegroundColor Cyan
 
-# 1. Prepare clean deployment directory
+# 1. Read and attempt to remove previous deployment
+$historyFile = Join-Path $baseDir "hosted_info.json"
+$prevUrl = ""
+if (Test-Path $historyFile) {
+    try {
+        $prevInfo = Get-Content $historyFile | ConvertFrom-Json
+        if ($prevInfo.slug) {
+            Write-Host "Attempting removal of previous deployment: $($prevInfo.slug)..." -ForegroundColor Gray
+            if ($prevInfo.claim_token) {
+                curl.exe -s -X DELETE "https://ship.page/drops/$($prevInfo.slug)" -H "Authorization: Bearer $($prevInfo.claim_token)" | Out-Null
+            } else {
+                curl.exe -s -X DELETE "https://ship.page/drops/$($prevInfo.slug)" | Out-Null
+            }
+        }
+    } catch {}
+}
+
+# Also clean up old zip and staging artifacts
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
+if (Test-Path (Join-Path $baseDir "apk_output")) { Remove-Item (Join-Path $baseDir "apk_output") -Recurse -Force }
+if (Test-Path (Join-Path $baseDir "Orbit_staging.apk")) { Remove-Item (Join-Path $baseDir "Orbit_staging.apk") -Force }
 New-Item -ItemType Directory -Path $tempDir | Out-Null
 
 Copy-Item (Join-Path $baseDir "index.html") $tempDir
@@ -50,8 +69,22 @@ try {
         Write-Host "  Live URL: $($json.url)" -ForegroundColor Yellow
         Write-Host "  Expires : $($json.expires_at)" -ForegroundColor Gray
         Write-Host "============================================================" -ForegroundColor Green
+        
         $json.url | Out-File (Join-Path $baseDir "hosted_url.txt") -Encoding utf8
+        
+        # Save info for next update removal
+        $deployRecord = @{
+            url = $json.url
+            slug = $json.slug
+            claim_token = $json.claim_token
+            expires_at = $json.expires_at
+            deployed_at = (Get-Date).ToString("o")
+        }
+        $deployRecord | ConvertTo-Json | Out-File $historyFile -Encoding utf8
     }
 } catch {
     Write-Host "Raw response: $resp"
+}
+finally {
+    if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 }

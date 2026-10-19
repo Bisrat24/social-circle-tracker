@@ -24,31 +24,18 @@ We all experience this:
 
 ## 📱 Android Version & How to Install
 
-### 📦 Option 1: Direct APK Installation (`Orbit.apk` - Ready Now!)
-Your signed Android package is already built and ready to install:
-👉 **[`Orbit.apk`](file:///c:/Users/Bisrat/Documents/APPS/social-circle-tracker/Orbit.apk)** (7.26 MB)
+### 🌐 Live Cloud Web App & Direct APK Download (Version 1.0.1)
 
-#### How to install it on your phone:
-1. **Send the APK to your phone**:
-   - Send it to yourself via **WhatsApp**, **Telegram**, or **Google Drive**, or connect your phone via **USB cable** and copy `Orbit.apk` to your phone's *Downloads* folder.
-2. **Install**:
-   - Tap `Orbit.apk` in your Android *Files* or *Downloads* app.
-   - If prompted, tap **"Allow from this source"** (standard prompt for APKs installed outside Google Play).
-   - Tap **"Install"** ➔ Done! Orbit will appear with its icon in your app drawer.
+| Platform | Link | Description |
+|---|---|---|
+| **Live Cloud Web App** | [https://apricot-broker-vsv48.ship.place/](https://apricot-broker-vsv48.ship.place/) | 24/7 HTTPS cloud deployment with instant mobile & desktop access |
+| **Direct APK Download** | [https://apricot-broker-vsv48.ship.place/Orbit.apk](https://apricot-broker-vsv48.ship.place/Orbit.apk) | Native signed Android APK (0.17 MB, v1+v2+v3 signatures, offline-capable) |
 
----
-
-### Option 2: Instant PWA Install (No APK Transfer Required)
-Orbit is also configured as a **Progressive Web App (PWA)**:
-1. On your PC, double-click **`host-mobile.bat`**. It will show your local Wi-Fi address (e.g. `http://192.168.1.X:5000/`).
-2. Make sure your Android phone is on the same Wi-Fi.
-3. Open **Chrome, Brave, or Edge** on your phone, navigate to `http://192.168.1.X:5000/`, and tap **"Install App"**!
-
----
-
-### Option 3: Full Android Studio Source Project (`/android`)
-A complete native Android Gradle project is available in the [`android/`](file:///c:/Users/Bisrat/Documents/APPS/social-circle-tracker/android) folder if you ever want to open it in Android Studio.
-To rebuild the APK at any time, just double-click **[`build-apk.bat`](file:///c:/Users/Bisrat/Documents/APPS/social-circle-tracker/build-apk.bat)**!
+#### How to install it on your Android phone:
+1. Tap the **[Download Orbit.apk](https://apricot-broker-vsv48.ship.place/Orbit.apk)** link on your phone.
+2. Tap the downloaded file to install/update the app.
+3. Grant **Contacts** and **Call Logs** permissions when prompted to enable 1-tap friend adding and call history auto-sync.
+4. Enjoy easy relationship management!
 
 ---
 

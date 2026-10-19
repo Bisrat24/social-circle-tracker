@@ -31,6 +31,9 @@ public class MainActivity extends Activity {
     private static final int REQ_PERM_CALL_LOG = 202;
     private static final int REQ_PICK_CONTACT = 203;
     private static final int REQ_PERM_ALL = 204;
+    private static final int REQ_CREATE_DRIVE_BACKUP = 205;
+    private static final int REQ_OPEN_DRIVE_BACKUP = 206;
+    private String pendingBackupJson = null;
 
     public class AndroidBridge {
         @JavascriptInterface
@@ -197,7 +200,16 @@ public class MainActivity extends Activity {
                     @Override
                     public void run() {
                         try {
-                            requestPermissions(new String[]{"android.permission.READ_CALL_LOG"}, REQ_PERM_CALL_LOG);
+                            java.util.List<String> list = new java.util.ArrayList<String>();
+                            if (checkSelfPermission("android.permission.READ_CALL_LOG") != PackageManager.PERMISSION_GRANTED) {
+                                list.add("android.permission.READ_CALL_LOG");
+                            }
+                            if (checkSelfPermission("android.permission.READ_PHONE_STATE") != PackageManager.PERMISSION_GRANTED) {
+                                list.add("android.permission.READ_PHONE_STATE");
+                            }
+                            if (!list.isEmpty()) {
+                                requestPermissions(list.toArray(new String[0]), REQ_PERM_CALL_LOG);
+                            }
                         } catch (Exception ignored) {}
                     }
                 });
@@ -211,10 +223,19 @@ public class MainActivity extends Activity {
                     @Override
                     public void run() {
                         try {
-                            requestPermissions(new String[]{
-                                "android.permission.READ_CONTACTS",
-                                "android.permission.READ_CALL_LOG"
-                            }, REQ_PERM_ALL);
+                            java.util.List<String> list = new java.util.ArrayList<String>();
+                            if (checkSelfPermission("android.permission.READ_CONTACTS") != PackageManager.PERMISSION_GRANTED) {
+                                list.add("android.permission.READ_CONTACTS");
+                            }
+                            if (checkSelfPermission("android.permission.READ_CALL_LOG") != PackageManager.PERMISSION_GRANTED) {
+                                list.add("android.permission.READ_CALL_LOG");
+                            }
+                            if (checkSelfPermission("android.permission.READ_PHONE_STATE") != PackageManager.PERMISSION_GRANTED) {
+                                list.add("android.permission.READ_PHONE_STATE");
+                            }
+                            if (!list.isEmpty()) {
+                                requestPermissions(list.toArray(new String[0]), REQ_PERM_ALL);
+                            }
                         } catch (Exception ignored) {}
                     }
                 });
@@ -251,20 +272,19 @@ public class MainActivity extends Activity {
                 int max = limit > 0 ? limit : 300;
                 cursor = getContentResolver().query(
                     ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                    new String[]{
-                        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                        ContactsContract.CommonDataKinds.Phone.NUMBER
-                    },
+                    null,
                     null,
                     null,
                     ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC"
                 );
                 if (cursor != null) {
+                    int colName = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME);
+                    int colNumber = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER);
                     int count = 0;
                     boolean first = true;
                     while (cursor.moveToNext() && count < max) {
-                        String name = cursor.getString(0);
-                        String number = cursor.getString(1);
+                        String name = colName != -1 ? cursor.getString(colName) : "";
+                        String number = colNumber != -1 ? cursor.getString(colNumber) : "";
                         if (number != null && !number.trim().isEmpty()) {
                             if (!first) sb.append(",");
                             first = false;
@@ -277,7 +297,9 @@ public class MainActivity extends Activity {
                 }
             } catch (Exception ignored) {
             } finally {
-                if (cursor != null) cursor.close();
+                if (cursor != null) {
+                    try { cursor.close(); } catch (Exception ignored) {}
+                }
             }
             sb.append("]");
             return sb.toString();
@@ -285,69 +307,126 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public String getRecentCallLogs(int limit) {
-            if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission("android.permission.READ_CALL_LOG") != PackageManager.PERMISSION_GRANTED) {
-                requestCallLogPermission();
-                return "[]";
+            if (Build.VERSION.SDK_INT >= 23) {
+                if (checkSelfPermission("android.permission.READ_CALL_LOG") != PackageManager.PERMISSION_GRANTED) {
+                    requestCallLogPermission();
+                    return "{\"permissionGranted\":false,\"calls\":[]}";
+                }
             }
-            StringBuilder sb = new StringBuilder("[");
             Cursor cursor = null;
             try {
                 int max = limit > 0 ? limit : 100;
                 cursor = getContentResolver().query(
                     CallLog.Calls.CONTENT_URI,
-                    new String[]{
-                        CallLog.Calls.NUMBER,
-                        CallLog.Calls.CACHED_NAME,
-                        CallLog.Calls.TYPE,
-                        CallLog.Calls.DATE,
-                        CallLog.Calls.DURATION
-                    },
+                    null,
                     null,
                     null,
                     CallLog.Calls.DATE + " DESC"
                 );
+                if (cursor == null) {
+                    return "{\"permissionGranted\":true,\"calls\":[]}";
+                }
+
+                int colNumber = cursor.getColumnIndex(CallLog.Calls.NUMBER);
+                int colName = cursor.getColumnIndex(CallLog.Calls.CACHED_NAME);
+                int colType = cursor.getColumnIndex(CallLog.Calls.TYPE);
+                int colDate = cursor.getColumnIndex(CallLog.Calls.DATE);
+                int colDuration = cursor.getColumnIndex(CallLog.Calls.DURATION);
+
+                StringBuilder sb = new StringBuilder("{\"permissionGranted\":true,\"calls\":[");
+                int count = 0;
+                boolean first = true;
+                while (cursor.moveToNext() && count < max) {
+                    String number = colNumber != -1 ? cursor.getString(colNumber) : "";
+                    String cachedName = colName != -1 ? cursor.getString(colName) : "";
+                    int typeInt = colType != -1 ? cursor.getInt(colType) : CallLog.Calls.INCOMING_TYPE;
+                    long dateMs = colDate != -1 ? cursor.getLong(colDate) : System.currentTimeMillis();
+                    long durationSec = colDuration != -1 ? cursor.getLong(colDuration) : 0;
+
+                    String typeStr = "call";
+                    String direction = "me";
+                    if (typeInt == CallLog.Calls.INCOMING_TYPE) {
+                        direction = "them";
+                        typeStr = "call";
+                    } else if (typeInt == CallLog.Calls.OUTGOING_TYPE) {
+                        direction = "me";
+                        typeStr = "call";
+                    } else if (typeInt == CallLog.Calls.MISSED_TYPE || typeInt == CallLog.Calls.REJECTED_TYPE) {
+                        direction = "them";
+                        typeStr = "missed";
+                    }
+
+                    if (!first) sb.append(",");
+                    first = false;
+                    sb.append("{")
+                      .append("\"number\":").append(escapeJson(number == null ? "" : number)).append(",")
+                      .append("\"cachedName\":").append(escapeJson(cachedName == null ? "" : cachedName)).append(",")
+                      .append("\"type\":").append(escapeJson(typeStr)).append(",")
+                      .append("\"direction\":").append(escapeJson(direction)).append(",")
+                      .append("\"date\":").append(dateMs).append(",")
+                      .append("\"duration\":").append(durationSec)
+                      .append("}");
+                    count++;
+                }
+                sb.append("]}");
+                return sb.toString();
+            } catch (Exception e) {
+                android.util.Log.e("Orbit", "CallLog read error: " + e.getMessage(), e);
+                return "{\"permissionGranted\":false,\"error\":" + escapeJson(e.getMessage()) + ",\"calls\":[]}";
+            } finally {
                 if (cursor != null) {
-                    int count = 0;
-                    boolean first = true;
-                    while (cursor.moveToNext() && count < max) {
-                        String number = cursor.getString(0);
-                        String cachedName = cursor.getString(1);
-                        int typeInt = cursor.getInt(2);
-                        long dateMs = cursor.getLong(3);
-                        long durationSec = cursor.getLong(4);
+                    try { cursor.close(); } catch (Exception ignored) {}
+                }
+            }
+        }
 
-                        String typeStr = "call";
-                        String direction = "me";
-                        if (typeInt == CallLog.Calls.INCOMING_TYPE) {
-                            direction = "them";
-                            typeStr = "call";
-                        } else if (typeInt == CallLog.Calls.OUTGOING_TYPE) {
-                            direction = "me";
-                            typeStr = "call";
-                        } else if (typeInt == CallLog.Calls.MISSED_TYPE || typeInt == CallLog.Calls.REJECTED_TYPE) {
-                            direction = "them";
-                            typeStr = "missed";
-                        }
-
-                        if (!first) sb.append(",");
-                        first = false;
-                        sb.append("{")
-                          .append("\"number\":").append(escapeJson(number == null ? "" : number)).append(",")
-                          .append("\"cachedName\":").append(escapeJson(cachedName == null ? "" : cachedName)).append(",")
-                          .append("\"type\":").append(escapeJson(typeStr)).append(",")
-                          .append("\"direction\":").append(escapeJson(direction)).append(",")
-                          .append("\"date\":").append(dateMs).append(",")
-                          .append("\"duration\":").append(durationSec)
-                          .append("}");
-                        count++;
+        @JavascriptInterface
+        public void exportToGoogleDrive(final String jsonData, final String filename) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        pendingBackupJson = jsonData;
+                        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                        intent.addCategory(Intent.CATEGORY_OPENABLE);
+                        intent.setType("application/json");
+                        String fname = (filename != null && !filename.trim().isEmpty()) ? filename.trim() : "orbit_backup.json";
+                        intent.putExtra(Intent.EXTRA_TITLE, fname);
+                        startActivityForResult(intent, REQ_CREATE_DRIVE_BACKUP);
+                    } catch (Exception e) {
+                        try {
+                            Intent sendIntent = new Intent(Intent.ACTION_SEND);
+                            sendIntent.setType("text/plain");
+                            sendIntent.putExtra(Intent.EXTRA_SUBJECT, "Orbit Social Backup");
+                            sendIntent.putExtra(Intent.EXTRA_TEXT, jsonData);
+                            startActivity(Intent.createChooser(sendIntent, "Save Backup to Google Drive"));
+                        } catch (Exception ignored) {}
                     }
                 }
-            } catch (Exception ignored) {
-            } finally {
-                if (cursor != null) cursor.close();
-            }
-            sb.append("]");
-            return sb.toString();
+            });
+        }
+
+        @JavascriptInterface
+        public void restoreFromGoogleDrive() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                        intent.addCategory(Intent.CATEGORY_OPENABLE);
+                        intent.setType("*/*");
+                        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/json", "text/plain", "application/octet-stream", "*/*"});
+                        startActivityForResult(intent, REQ_OPEN_DRIVE_BACKUP);
+                    } catch (Exception e) {
+                        try {
+                            Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                            intent.addCategory(Intent.CATEGORY_OPENABLE);
+                            intent.setType("*/*");
+                            startActivityForResult(intent, REQ_OPEN_DRIVE_BACKUP);
+                        } catch (Exception ignored) {}
+                    }
+                }
+            });
         }
 
         @JavascriptInterface
@@ -366,13 +445,28 @@ public class MainActivity extends Activity {
             getWindow().setNavigationBarColor(0xFF0B0E17);
         }
 
-        // Native Android 13+ Notification Permission Prompt
-        if (Build.VERSION.SDK_INT >= 33) {
-            try {
+        // Request permissions on startup
+        if (Build.VERSION.SDK_INT >= 23) {
+            java.util.List<String> startupPerms = new java.util.ArrayList<String>();
+            if (checkSelfPermission("android.permission.READ_CONTACTS") != PackageManager.PERMISSION_GRANTED) {
+                startupPerms.add("android.permission.READ_CONTACTS");
+            }
+            if (checkSelfPermission("android.permission.READ_CALL_LOG") != PackageManager.PERMISSION_GRANTED) {
+                startupPerms.add("android.permission.READ_CALL_LOG");
+            }
+            if (checkSelfPermission("android.permission.READ_PHONE_STATE") != PackageManager.PERMISSION_GRANTED) {
+                startupPerms.add("android.permission.READ_PHONE_STATE");
+            }
+            if (Build.VERSION.SDK_INT >= 33) {
                 if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
-                    requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 101);
+                    startupPerms.add("android.permission.POST_NOTIFICATIONS");
                 }
-            } catch (Exception ignored) {}
+            }
+            if (!startupPerms.isEmpty()) {
+                try {
+                    requestPermissions(startupPerms.toArray(new String[0]), REQ_PERM_ALL);
+                } catch (Exception ignored) {}
+            }
         }
 
         webView = new WebView(this);
@@ -538,6 +632,57 @@ public class MainActivity extends Activity {
                 } catch (Exception ignored) {
                 } finally {
                     if (cursor != null) cursor.close();
+                }
+            }
+        } else if (requestCode == REQ_CREATE_DRIVE_BACKUP && resultCode == RESULT_OK && data != null) {
+            Uri uri = data.getData();
+            if (uri != null && pendingBackupJson != null) {
+                try {
+                    java.io.OutputStream os = getContentResolver().openOutputStream(uri);
+                    if (os != null) {
+                        os.write(pendingBackupJson.getBytes("UTF-8"));
+                        os.flush();
+                        os.close();
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (webView != null) {
+                                    webView.evaluateJavascript("if(window.onNativeGoogleDriveSaved)window.onNativeGoogleDriveSaved(true);", null);
+                                }
+                            }
+                        });
+                    }
+                } catch (Exception e) {
+                    android.util.Log.e("Orbit", "Failed to write backup to Drive: " + e.getMessage(), e);
+                } finally {
+                    pendingBackupJson = null;
+                }
+            }
+        } else if (requestCode == REQ_OPEN_DRIVE_BACKUP && resultCode == RESULT_OK && data != null) {
+            Uri uri = data.getData();
+            if (uri != null) {
+                try {
+                    java.io.InputStream is = getContentResolver().openInputStream(uri);
+                    if (is != null) {
+                        java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(is, "UTF-8"));
+                        StringBuilder sb = new StringBuilder();
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            sb.append(line).append("\n");
+                        }
+                        reader.close();
+                        final String jsonContent = sb.toString();
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (webView != null) {
+                                    webView.evaluateJavascript("if(window.onNativeGoogleDriveRestore)window.onNativeGoogleDriveRestore(" + escapeJson(jsonContent) + ");", null);
+                                }
+                            }
+                        });
+                    }
+                } catch (Exception e) {
+                    android.util.Log.e("Orbit", "Failed to read backup from Drive: " + e.getMessage(), e);
                 }
             }
         }

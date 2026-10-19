@@ -67,7 +67,37 @@ class GoogleSyncEngine {
     // 2. Check protocol origin (warn if file://)
     this.checkProtocolOrigin();
 
-    // 3. Initialize Google Identity Services if available and on HTTP
+    // 3. Register native Google Drive backup & restore callbacks
+    window.onNativeGoogleDriveSaved = (success) => {
+      if (success) {
+        this.app.showToast('✅ Saved backup to Google Drive successfully!', 'success');
+        this.app.playChime('success');
+      }
+    };
+
+    window.onNativeGoogleDriveRestore = (jsonString) => {
+      if (!jsonString) return;
+      try {
+        const parsed = JSON.parse(jsonString);
+        const contactsToImport = Array.isArray(parsed) ? parsed : (parsed.contacts && Array.isArray(parsed.contacts) ? parsed.contacts : null);
+        if (!contactsToImport) {
+          throw new Error('Invalid format');
+        }
+        const merged = this.mergeContacts(this.app.contacts, contactsToImport);
+        this.app.contacts = merged;
+        this.app.saveContacts();
+        this.app.render();
+        this.app.showToast(`🎉 Restored ${contactsToImport.length} contacts from Google Drive!`, 'success');
+        this.app.playChime('success');
+        const modal = document.getElementById('googleSyncModal');
+        if (modal) modal.style.display = 'none';
+      } catch (e) {
+        console.error('Failed to parse Drive backup:', e);
+        this.app.showToast('Could not parse Google Drive backup file.', 'error');
+      }
+    };
+
+    // 4. Initialize Google Identity Services if available and on HTTP
     if (window.location.protocol !== 'file:' && window.google && window.google.accounts) {
       if (this.clientId) {
         try {
@@ -363,22 +393,58 @@ class GoogleSyncEngine {
   exportDirectGoogleDrive() {
     const backupPayload = {
       app: 'Orbit Social Circle Tracker',
-      version: 2,
+      version: '1.0.1',
       exportedAt: new Date().toISOString(),
       account: this.userProfile ? this.userProfile.email : 'local',
       contactsCount: this.app.contacts.length,
       contacts: this.app.contacts
     };
+    const jsonString = JSON.stringify(backupPayload, null, 2);
+    const filename = `orbit_backup_${new Date().toISOString().slice(0, 10)}.json`;
 
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupPayload, null, 2));
-    const filename = `orbit_google_drive_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    // 1. If on native Android app, use native Storage Access Framework / Drive intent!
+    if (window.AndroidBridge && typeof window.AndroidBridge.exportToGoogleDrive === 'function') {
+      window.AndroidBridge.exportToGoogleDrive(jsonString, filename);
+      this.app.showToast('Choose Google Drive in the save dialog to upload backup!', 'info');
+      return;
+    }
 
+    // 2. Web / Desktop: modern File System Access API (Chrome/Edge)
+    if (window.showSaveFilePicker) {
+      window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{
+          description: 'Orbit JSON Backup File',
+          accept: { 'application/json': ['.json'] }
+        }]
+      }).then(async (handle) => {
+        const writable = await handle.createWritable();
+        await writable.write(jsonString);
+        await writable.close();
+        this.app.showToast('✅ Saved backup successfully! Upload it to Google Drive.', 'success');
+        this.app.playChime('success');
+      }).catch(err => {
+        if (err.name !== 'AbortError') {
+          this.fallbackDownloadBackup(jsonString, filename);
+        }
+      });
+      return;
+    }
+
+    // 3. Fallback standard download
+    this.fallbackDownloadBackup(jsonString, filename);
+  }
+
+  fallbackDownloadBackup(jsonString, filename) {
+    const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
     const dlAnchor = document.createElement('a');
-    dlAnchor.setAttribute('href', dataStr);
+    dlAnchor.setAttribute('href', url);
     dlAnchor.setAttribute('download', filename);
     document.body.appendChild(dlAnchor);
     dlAnchor.click();
     dlAnchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
 
     this.app.showToast('✅ Backup downloaded! Opening Google Drive in new tab...', 'success');
     this.app.playChime('success');
@@ -386,6 +452,21 @@ class GoogleSyncEngine {
     setTimeout(() => {
       window.open('https://drive.google.com/drive/my-drive', '_blank');
     }, 700);
+  }
+
+  triggerRestoreGoogleDrive() {
+    // 1. If on native Android app, use native Storage Access Framework / Drive picker!
+    if (window.AndroidBridge && typeof window.AndroidBridge.restoreFromGoogleDrive === 'function') {
+      window.AndroidBridge.restoreFromGoogleDrive();
+      return;
+    }
+
+    // 2. Web fallback: open file input
+    const input = document.getElementById('googleDriveRestoreInput');
+    if (input) {
+      input.value = '';
+      input.click();
+    }
   }
 
   restoreGoogleDriveBackup(file) {

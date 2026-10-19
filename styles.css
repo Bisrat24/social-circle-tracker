@@ -3421,7 +3421,20 @@ body.theme-light .brand-text h1 {
   .call-logs-toolbar .btn, .call-logs-filter-group select {
     width: 100%;
   }
+  #contactModal .modal-footer {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+  #contactModal .modal-footer > div {
+    width: 100%;
+    display: flex;
+    gap: 8px;
+  }
+  #contactModal .modal-footer .btn {
+    width: 100%;
+  }
 }
+
 
 
 

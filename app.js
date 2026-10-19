@@ -8,7 +8,7 @@
 // CONFIGURATION & CONSTANTS
 // ==========================================================================
 
-const APP_VERSION = '1.0.2';
+const APP_VERSION = '1.0.3';
 
 const LEVEL_DEFINITIONS = [
   { level: 1, title: 'Acquaintance', minXp: 0, maxXp: 99, colorClass: 'lvl-1' },
@@ -223,8 +223,21 @@ class SocialCircleApp {
     } catch (e) {
       console.warn('Google Sync init note:', e);
     }
+    this.updateCloudHostingUI();
     this.bindEvents();
     this.render();
+  }
+
+  updateCloudHostingUI() {
+    if (window.location && window.location.protocol && window.location.protocol.startsWith('http')) {
+      const currentOrigin = window.location.origin.replace(/\/+$/, '') + '/';
+      const activeCloudAppUrl = document.getElementById('activeCloudAppUrl');
+      const linkOpenCloudApp = document.getElementById('linkOpenCloudApp');
+      const linkDownloadApk = document.getElementById('linkDownloadApk');
+      if (activeCloudAppUrl) activeCloudAppUrl.textContent = currentOrigin;
+      if (linkOpenCloudApp) linkOpenCloudApp.href = currentOrigin;
+      if (linkDownloadApk) linkDownloadApk.href = currentOrigin + 'Orbit.apk';
+    }
   }
 
   registerServiceWorker() {
@@ -327,8 +340,21 @@ class SocialCircleApp {
     let lastContactDate = null;
 
     if (contact.interactions && contact.interactions.length > 0) {
-      const sorted = [...contact.interactions].sort((a, b) => new Date(b.date) - new Date(a.date));
-      lastContactDate = new Date(sorted[0].date);
+      // User requirement: if call duration is below 10 sec, log it in history but do not consider it as a real contact (cadence not reset)
+      const realInteractions = contact.interactions.filter(item => {
+        if (!item) return false;
+        if (item.type === 'missed') return false;
+        if (item.type === 'call') {
+          const dur = typeof item.duration === 'number' ? item.duration : (typeof item.durationSec === 'number' ? item.durationSec : 60);
+          return dur >= 10;
+        }
+        return true;
+      });
+
+      if (realInteractions.length > 0) {
+        const sorted = [...realInteractions].sort((a, b) => new Date(b.date) - new Date(a.date));
+        lastContactDate = new Date(sorted[0].date);
+      }
     }
 
     const daysSinceLast = lastContactDate 
@@ -543,6 +569,12 @@ class SocialCircleApp {
       if (document.visibilityState === 'visible') {
         this.checkAndSendDueNotifications();
         this.updateNotificationUI();
+        if (this.googleSync && navigator.onLine) {
+          const activeKey = this.googleSync.syncChannelId || (this.googleSync.userProfile ? this.googleSync.userProfile.email : null);
+          if (activeKey) {
+            this.googleSync.performTwoWaySync();
+          }
+        }
       }
     });
 
@@ -559,7 +591,7 @@ class SocialCircleApp {
       if (!isOnline) {
         this.showToast('Working offline. All changes saved locally on device.', 'info');
       } else {
-        if (this.googleSync && this.googleSync.accessToken) {
+        if (this.googleSync) {
           this.googleSync.scheduleAutoSync();
         }
       }
@@ -1002,6 +1034,19 @@ class SocialCircleApp {
         else lastContactText = `${m.daysSinceLast} days ago`;
       }
 
+      const allPhones = this.getContactPhones(contact);
+      let phonePreview = '';
+      if (allPhones.length > 1) {
+        phonePreview = `<div class="contact-phones-row" style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">
+          <span>📞 ${this.escapeHtml(allPhones[0])}</span>
+          <span style="color:#60a5fa; margin-left:4px;">(+${allPhones.length - 1} more)</span>
+        </div>`;
+      } else if (allPhones.length === 1) {
+        phonePreview = `<div class="contact-phones-row" style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">
+          <span>📞 ${this.escapeHtml(allPhones[0])}</span>
+        </div>`;
+      }
+
       const card = document.createElement('div');
       card.className = 'contact-card';
       card.dataset.id = contact.id;
@@ -1017,6 +1062,7 @@ class SocialCircleApp {
               <h3 class="contact-name">${this.escapeHtml(contact.name)}</h3>
             </div>
             ${contact.nickname ? `<div class="contact-nickname">${this.escapeHtml(contact.nickname)}</div>` : ''}
+            ${phonePreview}
             <div class="contact-tags">
               <span class="circle-badge ${circleMeta.badgeClass}">${circleMeta.icon} ${circleMeta.label}</span>
               ${m.status === 'owe_call' ? `<span class="circle-badge badge-inner" style="background:rgba(244,63,94,0.2);color:#ff6b8b;">⏳ Owe Call</span>` : ''}
@@ -1162,25 +1208,40 @@ class SocialCircleApp {
     const targetContactId = contactId || (select.value ? select.value : null);
     const targetContact = this.contacts.find(c => c.id === targetContactId);
 
-    if (suggestionBox && targetContact && targetContact.phone && !callPrefill) {
-      const logRes = this.getDeviceCallLogs(20);
+    if (suggestionBox && targetContact && !callPrefill) {
+      const logRes = this.getDeviceCallLogs(50);
       const calls = (logRes && logRes.calls) ? logRes.calls : [];
-      const recentCall = calls.find(call => {
-        return this.normalizePhoneNumber(call.number) === this.normalizePhoneNumber(targetContact.phone);
+      const matchingCalls = calls.filter(call => {
+        const matched = this.findContactByPhone(call.number);
+        return matched && matched.id === targetContact.id;
       });
 
-      if (recentCall && (Date.now() - recentCall.date) < 7 * 24 * 3600 * 1000) {
+      // Filter to unlogged calls within last 14 days
+      const unloggedMatching = matchingCalls.filter(call => {
+        if (!Array.isArray(targetContact.interactions)) return true;
+        return !targetContact.interactions.some(i => {
+          if (i.callLogDate && i.callLogDate === call.date) return true;
+          return Math.abs(new Date(i.date).getTime() - call.date) < 180000;
+        });
+      });
+
+      if (unloggedMatching.length > 0) {
+        const recentCall = unloggedMatching[0];
         const isMissed = recentCall.type === 'missed';
         const d = new Date(recentCall.date);
+        const isBrief = recentCall.duration < 10;
         suggestionBox.style.display = 'flex';
         document.getElementById('recentCallSuggestionContent').innerHTML = `
           <strong>${recentCall.direction === 'them' ? '📥 Incoming' : '📤 Outgoing'} ${isMissed ? 'Missed Call' : 'Call'}</strong> 
           • ${d.toLocaleDateString([], {month:'short', day:'numeric'})} at ${d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} 
-          (${this.formatDuration(recentCall.duration)})
+          (${this.formatDuration(recentCall.duration)})${isBrief ? ' <span style="color:#f59e0b;">(Brief &lt;10s)</span>' : ''}
+          ${unloggedMatching.length > 1 ? `<div style="font-size:0.75rem; color:#60a5fa; margin-top:2px;">+ ${unloggedMatching.length - 1} other unlogged calls found with this friend</div>` : ''}
         `;
         document.getElementById('btnApplyCallSuggestion').onclick = () => {
           document.getElementById('interactionDate').value = new Date(recentCall.date - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-          document.getElementById('interactionSummary').value = `${recentCall.direction === 'them' ? 'Incoming' : 'Outgoing'} call (${this.formatDuration(recentCall.duration)})`;
+          document.getElementById('interactionSummary').value = isBrief
+            ? `${recentCall.direction === 'them' ? 'Incoming' : 'Outgoing'} call (${this.formatDuration(recentCall.duration)}) - Brief (<10s: not a full contact)`
+            : `${recentCall.direction === 'them' ? 'Incoming' : 'Outgoing'} call (${this.formatDuration(recentCall.duration)})`;
           
           document.querySelectorAll('.radio-card').forEach(rc => {
             rc.classList.remove('selected');
@@ -1459,7 +1520,14 @@ class SocialCircleApp {
     document.getElementById('profRecCaption').textContent = caption;
 
     // Contact details
-    document.getElementById('profPhoneText').textContent = contact.phone || 'No phone set';
+    const profPhones = this.getContactPhones(contact);
+    if (profPhones.length > 0) {
+      document.getElementById('profPhoneText').innerHTML = profPhones.map(p => 
+        `<a href="tel:${p}" style="color:var(--text-primary); text-decoration:underline; margin-right:8px; display:inline-block;">📞 ${this.escapeHtml(p)}</a>`
+      ).join(' ');
+    } else {
+      document.getElementById('profPhoneText').textContent = 'No phone set';
+    }
     document.getElementById('profEmailText').textContent = contact.email || 'No email set';
     document.getElementById('profCadenceText').textContent = this.formatCadence(contact.targetCadenceDays || 14);
     document.getElementById('profBirthdayText').textContent = contact.birthday || 'None set';
@@ -1562,7 +1630,8 @@ class SocialCircleApp {
       document.getElementById('editContactId').value = contact.id;
       document.getElementById('formName').value = contact.name;
       document.getElementById('formNickname').value = contact.nickname || '';
-      document.getElementById('formPhone').value = contact.phone || '';
+      const allPhones = this.getContactPhones(contact);
+      document.getElementById('formPhone').value = allPhones.length > 0 ? allPhones.join(', ') : (contact.phone || '');
       document.getElementById('formEmail').value = contact.email || '';
       document.getElementById('formCircle').value = contact.circle || 'close';
       document.getElementById('formCadence').value = contact.targetCadenceDays || 14;
@@ -1583,7 +1652,11 @@ class SocialCircleApp {
       document.getElementById('editContactId').value = '';
       if (prefill) {
         if (prefill.name) document.getElementById('formName').value = prefill.name;
-        if (prefill.phone) document.getElementById('formPhone').value = prefill.phone;
+        if (prefill.phones && Array.isArray(prefill.phones) && prefill.phones.length > 0) {
+          document.getElementById('formPhone').value = prefill.phones.join(', ');
+        } else if (prefill.phone) {
+          document.getElementById('formPhone').value = prefill.phone;
+        }
         if (prefill.notes) document.getElementById('formNotes').value = prefill.notes;
         if (prefill.circle) document.getElementById('formCircle').value = prefill.circle;
       }
@@ -1601,7 +1674,9 @@ class SocialCircleApp {
     if (!name) return;
 
     const nickname = document.getElementById('formNickname').value.trim();
-    const phone = document.getElementById('formPhone').value.trim();
+    const rawPhone = document.getElementById('formPhone').value.trim();
+    const phoneList = rawPhone.split(/[\n,;/]+/).map(p => p.trim()).filter(Boolean);
+    const primaryPhone = phoneList.length > 0 ? phoneList[0] : '';
     const email = document.getElementById('formEmail').value.trim();
     const circle = document.getElementById('formCircle').value;
     const cadence = parseInt(document.getElementById('formCadence').value, 10);
@@ -1615,7 +1690,8 @@ class SocialCircleApp {
       if (contact) {
         contact.name = name;
         contact.nickname = nickname;
-        contact.phone = phone;
+        contact.phone = primaryPhone;
+        contact.phones = phoneList;
         contact.email = email;
         contact.circle = circle;
         contact.targetCadenceDays = cadence;
@@ -1634,7 +1710,8 @@ class SocialCircleApp {
         id: 'c_' + Date.now(),
         name,
         nickname,
-        phone,
+        phone: primaryPhone,
+        phones: phoneList,
         email,
         circle,
         targetCadenceDays: cadence,
@@ -1699,6 +1776,7 @@ class SocialCircleApp {
         name: c.name,
         nickname: c.nickname || '',
         phone: c.phone || '',
+        phones: Array.isArray(c.phones) ? c.phones : ((c.phone && c.phone.trim()) ? [c.phone.trim()] : []),
         email: c.email || '',
         circle: c.circle || 'close',
         targetCadenceDays: c.targetCadenceDays || 14,
@@ -1707,6 +1785,7 @@ class SocialCircleApp {
         birthday: c.birthday || '',
         nextTopicsToAsk: c.nextTopicsToAsk || '',
         notes: c.notes || '',
+        programs: Array.isArray(c.programs) ? c.programs : [],
         interactions: Array.isArray(c.interactions) ? c.interactions : [],
         promisedCall: c.promisedCall || null
       }));
@@ -2398,18 +2477,44 @@ class SocialCircleApp {
 
   normalizePhoneNumber(phone) {
     if (!phone) return '';
-    const digits = String(phone).replace(/\D/g, '');
-    return digits.length >= 7 ? digits.slice(-7) : digits;
+    return String(phone).replace(/\D/g, '');
+  }
+
+  getContactPhones(contact) {
+    if (!contact) return [];
+    const set = new Set();
+    if (Array.isArray(contact.phones)) {
+      contact.phones.forEach(p => {
+        if (p && String(p).trim()) set.add(String(p).trim());
+      });
+    }
+    if (contact.phone) {
+      String(contact.phone).split(/[\n,;/]+/).forEach(p => {
+        if (p && p.trim()) set.add(p.trim());
+      });
+    }
+    return Array.from(set);
   }
 
   findContactByPhone(phone) {
     if (!phone) return null;
-    const target = this.normalizePhoneNumber(phone);
-    if (!target || target.length < 5) return null;
+    const targetDigits = this.normalizePhoneNumber(phone);
+    if (!targetDigits || targetDigits.length < 5) return null;
+
     return this.contacts.find(c => {
-      if (!c.phone) return false;
-      const cNorm = this.normalizePhoneNumber(c.phone);
-      return cNorm === target || (cNorm.length >= 7 && target.length >= 7 && (cNorm.endsWith(target) || target.endsWith(cNorm)));
+      const phones = this.getContactPhones(c);
+      return phones.some(p => {
+        const cDigits = this.normalizePhoneNumber(p);
+        if (!cDigits || cDigits.length < 5) return false;
+        if (cDigits === targetDigits) return true;
+        // Compare last 7 to 10 digits for international vs local dialing compatibility
+        const minLen = Math.min(cDigits.length, targetDigits.length);
+        if (minLen >= 7) {
+          const sliceLen = Math.min(minLen, 9);
+          return cDigits.slice(-sliceLen) === targetDigits.slice(-sliceLen);
+        }
+        return false;
+      });
     });
   }
 
@@ -2455,18 +2560,24 @@ class SocialCircleApp {
   applyPickedContact(contact) {
     if (!contact) return;
     const modal = document.getElementById('contactModal');
+    const allPhones = (contact.phones && Array.isArray(contact.phones) && contact.phones.length > 0)
+      ? contact.phones
+      : (contact.phone ? [contact.phone] : []);
+    const phoneStr = allPhones.join(', ');
+
     if (!modal || modal.style.display === 'none') {
       this.openAddEditContactModal(null, {
         name: contact.name || '',
-        phone: contact.phone || ''
+        phone: phoneStr,
+        phones: allPhones
       });
     } else {
       if (contact.name) document.getElementById('formName').value = contact.name;
-      if (contact.phone) document.getElementById('formPhone').value = contact.phone;
+      if (phoneStr) document.getElementById('formPhone').value = phoneStr;
       const circleSel = document.getElementById('formCircle');
       if (circleSel) circleSel.focus();
     }
-    this.showToast(`📱 Picked: ${contact.name || contact.phone}`, 'success');
+    this.showToast(`📱 Picked: ${contact.name || phoneStr}`, 'success');
   }
 
   openDeviceContactsModal() {
@@ -2485,7 +2596,7 @@ class SocialCircleApp {
 
     if (window.AndroidBridge && typeof window.AndroidBridge.getDeviceContacts === 'function') {
       try {
-        const raw = window.AndroidBridge.getDeviceContacts(300);
+        const raw = window.AndroidBridge.getDeviceContacts(500);
         deviceContacts = JSON.parse(raw);
       } catch (e) {
         console.warn('Error reading device contacts:', e);
@@ -2503,11 +2614,11 @@ class SocialCircleApp {
         `;
       }
       deviceContacts = [
-        { name: 'Sarah Miller', phone: '+1 555-0819' },
-        { name: 'Liam O\'Connor', phone: '+1 555-0422' },
-        { name: 'Chloe Dubois', phone: '+1 555-0633' },
-        { name: 'Tariq Hassan', phone: '+1 555-0744' },
-        { name: 'Maya Lin', phone: '+1 555-0955' }
+        { name: 'Sarah Miller', phone: '+1 555-0819', phones: ['+1 555-0819', '+1 555-0820'] },
+        { name: 'Liam O\'Connor', phone: '+1 555-0422', phones: ['+1 555-0422'] },
+        { name: 'Chloe Dubois', phone: '+1 555-0633', phones: ['+1 555-0633', '+1 555-0634'] },
+        { name: 'Tariq Hassan', phone: '+1 555-0744', phones: ['+1 555-0744'] },
+        { name: 'Maya Lin', phone: '+1 555-0955', phones: ['+1 555-0955'] }
       ];
     } else {
       if (notice) notice.style.display = 'none';
@@ -2517,7 +2628,8 @@ class SocialCircleApp {
       const q = filterText.toLowerCase();
       deviceContacts = deviceContacts.filter(c => 
         (c.name && c.name.toLowerCase().includes(q)) || 
-        (c.phone && c.phone.includes(q))
+        (c.phone && c.phone.includes(q)) ||
+        (Array.isArray(c.phones) && c.phones.some(p => p.includes(q)))
       );
     }
 
@@ -2527,7 +2639,9 @@ class SocialCircleApp {
     }
 
     list.innerHTML = deviceContacts.map(c => {
-      const existing = this.findContactByPhone(c.phone);
+      const allPhones = (c.phones && Array.isArray(c.phones) && c.phones.length > 0) ? c.phones : [c.phone];
+      const existing = allPhones.some(p => this.findContactByPhone(p));
+      const phonesLabel = allPhones.join(' • ');
       return `
         <div class="device-contact-card">
           <div class="device-contact-left">
@@ -2540,7 +2654,8 @@ class SocialCircleApp {
                 ${existing ? `<span class="call-status-tag tag-friend">In Orbit (${CIRCLE_LABELS[existing.circle]?.label || 'Friend'})</span>` : ''}
               </h4>
               <div class="device-contact-meta">
-                <span>📞 ${this.escapeHtml(c.phone)}</span>
+                <span>📞 ${this.escapeHtml(phonesLabel)}</span>
+                ${allPhones.length > 1 ? `<span style="color:#60a5fa; font-size:0.75rem;">(${allPhones.length} numbers)</span>` : ''}
               </div>
             </div>
           </div>
@@ -2548,7 +2663,7 @@ class SocialCircleApp {
             ${existing ? `
               <button class="btn btn-sm btn-ghost" disabled>✓ Added</button>
             ` : `
-              <button class="btn btn-sm btn-primary btn-add-device-contact" data-name="${this.escapeHtml(c.name)}" data-phone="${this.escapeHtml(c.phone)}">
+              <button class="btn btn-sm btn-primary btn-add-device-contact" data-name="${this.escapeHtml(c.name)}" data-phone="${this.escapeHtml(c.phone || '')}" data-phones='${this.escapeHtml(JSON.stringify(allPhones))}'>
                 ➕ Add Friend
               </button>
             `}
@@ -2561,8 +2676,14 @@ class SocialCircleApp {
       btn.onclick = () => {
         const name = btn.dataset.name;
         const phone = btn.dataset.phone;
+        let phones = [];
+        try { phones = JSON.parse(btn.dataset.phones || '[]'); } catch(e) {}
         this.closeModal('deviceContactsModal');
-        this.openAddEditContactModal(null, { name, phone });
+        this.openAddEditContactModal(null, {
+          name,
+          phone: phones.length > 0 ? phones.join(', ') : phone,
+          phones
+        });
       };
     });
   }
@@ -2788,7 +2909,7 @@ class SocialCircleApp {
                 <span>•</span>
                 <span>📅 ${dateStr} at ${timeStr}</span>
                 <span>•</span>
-                <span>⏱️ ${isMissed ? 'No answer' : this.formatDuration(call.duration)}</span>
+                <span>⏱️ ${isMissed ? 'No answer' : (call.duration < 10 && call.duration > 0 ? `${this.formatDuration(call.duration)} <span style="color:#f59e0b; font-size:0.75rem;">(Brief &lt;10s)</span>` : this.formatDuration(call.duration))}</span>
                 ${call.matchedContact && call.matchedContact.phone !== call.number ? `<span>• 📞 ${this.escapeHtml(call.number)}</span>` : ''}
               </div>
             </div>
@@ -2796,17 +2917,23 @@ class SocialCircleApp {
           <div class="call-actions">
             ${call.matchedContact ? (
               call.isLogged ? `
-                <button class="btn btn-sm btn-ghost" disabled>✓ In Orbit</button>
+                <button class="btn btn-sm btn-ghost" disabled>${call.duration < 10 ? '✓ Brief Ping' : '✓ In Orbit'}</button>
               ` : (
                 isMissed ? `
                   <button class="btn btn-sm btn-secondary btn-log-missed-call" data-contact-id="${call.matchedContact.id}" data-date="${call.date}" title="Set callback reminder for missed call">
                     ⏳ Owe Call
                   </button>
-                ` : `
-                  <button class="btn btn-sm btn-primary btn-quick-log-call" data-contact-id="${call.matchedContact.id}" data-direction="${call.direction}" data-duration="${call.duration}" data-date="${call.date}">
-                    ⚡ Log Catch-up
-                  </button>
-                `
+                ` : (
+                  call.duration < 10 ? `
+                    <button class="btn btn-sm btn-secondary btn-quick-log-call" data-contact-id="${call.matchedContact.id}" data-direction="${call.direction}" data-duration="${call.duration}" data-date="${call.date}" title="Logs call history without resetting friend cadence">
+                      ⚡ Log Brief Ping (<10s)
+                    </button>
+                  ` : `
+                    <button class="btn btn-sm btn-primary btn-quick-log-call" data-contact-id="${call.matchedContact.id}" data-direction="${call.direction}" data-duration="${call.duration}" data-date="${call.date}">
+                      ⚡ Log Catch-up
+                    </button>
+                  `
+                )
               )
             ) : `
               <button class="btn btn-sm btn-secondary btn-add-friend-from-call" data-name="${this.escapeHtml(call.cachedName || '')}" data-phone="${this.escapeHtml(call.number)}" data-date="${call.date}">
@@ -2868,17 +2995,22 @@ class SocialCircleApp {
     const contact = this.contacts.find(c => c.id === contactId);
     if (!contact) return;
 
-    const durSec = duration || 0;
+    const durSec = parseInt(duration, 10) || 0;
     const isThey = direction === 'them';
-    const xpGained = 25 + (isThey ? 15 : 0);
+    const isBrief = durSec < 10;
+    const xpGained = isBrief ? 5 : (25 + (isThey ? 15 : 0));
 
     const interaction = {
       id: 'i_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
       type: 'call',
       initiator: direction,
+      duration: durSec,
+      isBrief: isBrief,
       date: new Date(date).toISOString(),
-      mood: durSec > 300 ? 'great' : (durSec > 60 ? 'good' : 'quick'),
-      summary: `${isThey ? 'Incoming' : 'Outgoing'} phone call (${this.formatDuration(durSec)})`,
+      mood: isBrief ? 'quick' : (durSec > 300 ? 'great' : (durSec > 60 ? 'good' : 'quick')),
+      summary: isBrief
+        ? `${isThey ? 'Incoming' : 'Outgoing'} call (${this.formatDuration(durSec)}) - Brief (<10s: rhythm not reset)`
+        : `${isThey ? 'Incoming' : 'Outgoing'} phone call (${this.formatDuration(durSec)})`,
       nextTopics: contact.nextTopicsToAsk || '',
       callLogDate: date
     };
@@ -2887,22 +3019,27 @@ class SocialCircleApp {
     contact.interactions.unshift(interaction);
     contact.currentXp = Math.min(1000, (contact.currentXp || 0) + xpGained);
 
-    // If promise was active, fulfill it
-    if (contact.promisedCall && contact.promisedCall.isPromised) {
+    // Only fulfill promised call if it was a real contact (>= 10s)
+    if (!isBrief && contact.promisedCall && contact.promisedCall.isPromised) {
       contact.promisedCall = null;
     }
 
     this.saveContacts();
     this.render();
-    this.showToast(`📞 Logged call with ${contact.name}! (+${xpGained} XP)`, 'success');
-    this.playLevelUpSound();
+    if (isBrief) {
+      this.showToast(`📞 Logged brief call with ${contact.name} (${durSec}s: contact rhythm kept active). (+5 XP)`, 'info');
+    } else {
+      this.showToast(`📞 Logged call with ${contact.name}! (+${xpGained} XP)`, 'success');
+      this.playLevelUpSound();
+    }
     this.updateCallLogsBadges();
   }
 
   autoSyncUnloggedCalls() {
-    const logRes = this.getDeviceCallLogs(100);
+    const logRes = this.getDeviceCallLogs(300);
     const rawCalls = (logRes && logRes.calls) ? logRes.calls : [];
     let count = 0;
+    let briefCount = 0;
 
     rawCalls.forEach(call => {
       if (call.type === 'missed') return;
@@ -2917,21 +3054,31 @@ class SocialCircleApp {
       });
 
       if (!isAlreadyLogged) {
+        const durSec = parseInt(call.duration, 10) || 0;
         const isThey = call.direction === 'them';
-        const xpGained = 25 + (isThey ? 15 : 0);
+        const isBrief = durSec < 10;
+        const xpGained = isBrief ? 5 : (25 + (isThey ? 15 : 0));
+
         contact.interactions.unshift({
           id: 'i_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
           type: 'call',
           initiator: call.direction,
+          duration: durSec,
+          isBrief: isBrief,
           date: new Date(call.date).toISOString(),
-          mood: call.duration > 300 ? 'great' : 'good',
-          summary: `${isThey ? 'Incoming' : 'Outgoing'} call (${this.formatDuration(call.duration)})`,
+          mood: isBrief ? 'quick' : (durSec > 300 ? 'great' : 'good'),
+          summary: isBrief
+            ? `${isThey ? 'Incoming' : 'Outgoing'} call (${this.formatDuration(durSec)}) - Brief (<10s: rhythm not reset)`
+            : `${isThey ? 'Incoming' : 'Outgoing'} call (${this.formatDuration(durSec)})`,
           nextTopics: contact.nextTopicsToAsk || '',
           callLogDate: call.date
         });
         contact.currentXp = Math.min(1000, (contact.currentXp || 0) + xpGained);
-        if (contact.promisedCall) contact.promisedCall = null;
+        if (!isBrief && contact.promisedCall) {
+          contact.promisedCall = null;
+        }
         count++;
+        if (isBrief) briefCount++;
       }
     });
 
@@ -2940,7 +3087,8 @@ class SocialCircleApp {
       this.render();
       this.renderCallLogs();
       this.updateCallLogsBadges();
-      this.showToast(`⚡ Automatically logged ${count} calls from phone history!`, 'success');
+      const briefNote = briefCount > 0 ? ` (${briefCount} brief pings <10s logged without resetting rhythm)` : '';
+      this.showToast(`⚡ Automatically logged ${count} calls from phone history!${briefNote}`, 'success');
       this.playLevelUpSound();
     } else {
       this.showToast('All calls with friends are already up to date!', 'info');

@@ -270,10 +270,9 @@ public class MainActivity extends Activity {
                 requestContactsPermission();
                 return "[]";
             }
-            StringBuilder sb = new StringBuilder("[");
             Cursor cursor = null;
             try {
-                int max = limit > 0 ? limit : 300;
+                int max = limit > 0 ? limit : 500;
                 cursor = getContentResolver().query(
                     ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
                     null,
@@ -284,20 +283,55 @@ public class MainActivity extends Activity {
                 if (cursor != null) {
                     int colName = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME);
                     int colNumber = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER);
-                    int count = 0;
-                    boolean first = true;
-                    while (cursor.moveToNext() && count < max) {
+                    int colId = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.CONTACT_ID);
+
+                    java.util.LinkedHashMap<String, java.util.List<String>> contactMap = new java.util.LinkedHashMap<String, java.util.List<String>>();
+                    java.util.Map<String, String> nameMap = new java.util.HashMap<String, String>();
+
+                    while (cursor.moveToNext()) {
                         String name = colName != -1 ? cursor.getString(colName) : "";
                         String number = colNumber != -1 ? cursor.getString(colNumber) : "";
+                        String contactId = colId != -1 ? cursor.getString(colId) : "";
+                        if (name == null || name.trim().isEmpty()) {
+                            name = number;
+                        }
+                        String key = (contactId != null && !contactId.trim().isEmpty()) ? contactId : name.trim().toLowerCase();
+                        if (!contactMap.containsKey(key)) {
+                            contactMap.put(key, new java.util.ArrayList<String>());
+                            nameMap.put(key, name);
+                        }
                         if (number != null && !number.trim().isEmpty()) {
-                            if (!first) sb.append(",");
-                            first = false;
-                            sb.append("{\"name\":").append(escapeJson(name == null ? "" : name))
-                              .append(",\"phone\":").append(escapeJson(number))
-                              .append("}");
-                            count++;
+                            java.util.List<String> list = contactMap.get(key);
+                            if (!list.contains(number.trim())) {
+                                list.add(number.trim());
+                            }
                         }
                     }
+
+                    StringBuilder sb = new StringBuilder("[");
+                    int count = 0;
+                    boolean first = true;
+                    for (java.util.Map.Entry<String, java.util.List<String>> entry : contactMap.entrySet()) {
+                        if (count >= max) break;
+                        String cName = nameMap.get(entry.getKey());
+                        java.util.List<String> phones = entry.getValue();
+                        String primaryPhone = phones.isEmpty() ? "" : phones.get(0);
+
+                        if (!first) sb.append(",");
+                        first = false;
+                        sb.append("{");
+                        sb.append("\"name\":").append(escapeJson(cName == null ? "" : cName)).append(",");
+                        sb.append("\"phone\":").append(escapeJson(primaryPhone)).append(",");
+                        sb.append("\"phones\":[");
+                        for (int p = 0; p < phones.size(); p++) {
+                            if (p > 0) sb.append(",");
+                            sb.append(escapeJson(phones.get(p)));
+                        }
+                        sb.append("]}");
+                        count++;
+                    }
+                    sb.append("]");
+                    return sb.toString();
                 }
             } catch (Exception ignored) {
             } finally {
@@ -305,8 +339,7 @@ public class MainActivity extends Activity {
                     try { cursor.close(); } catch (Exception ignored) {}
                 }
             }
-            sb.append("]");
-            return sb.toString();
+            return "[]";
         }
 
         @JavascriptInterface
@@ -319,7 +352,7 @@ public class MainActivity extends Activity {
             }
             Cursor cursor = null;
             try {
-                int max = limit > 0 ? limit : 100;
+                int max = limit > 0 ? limit : 300;
                 cursor = getContentResolver().query(
                     CallLog.Calls.CONTENT_URI,
                     null,
@@ -389,39 +422,19 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    try {
-                        final String fname = (filename != null && !filename.trim().isEmpty()) ? filename.trim() : "orbit_social_backup.json";
-                        pendingBackupJson = jsonData;
-
-                        java.io.File cacheFile = new java.io.File(getCacheDir(), fname);
-                        java.io.FileOutputStream fos = new java.io.FileOutputStream(cacheFile);
-                        fos.write(jsonData.getBytes("UTF-8"));
-                        fos.flush();
-                        fos.close();
-
-                        Intent shareIntent = new Intent(Intent.ACTION_SEND);
-                        shareIntent.setType("application/json");
-                        shareIntent.putExtra(Intent.EXTRA_SUBJECT, "Orbit Backup: " + fname);
-                        shareIntent.putExtra(Intent.EXTRA_TEXT, jsonData);
-                        shareIntent.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(cacheFile));
-                        shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-
-                        Intent chooser = Intent.createChooser(shareIntent, "Save Backup to Google Drive / Files");
-                        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        startActivity(chooser);
-
-                        if (webView != null) {
-                            webView.evaluateJavascript("if(window.onNativeGoogleDriveSaved)window.onNativeGoogleDriveSaved(true);", null);
-                        }
-                    } catch (Exception e) {
+                    pendingBackupJson = jsonData;
+                    final String fname = (filename != null && !filename.trim().isEmpty()) ? filename.trim() : "orbit_backup.json";
+                    if (Build.VERSION.SDK_INT >= 19) {
                         try {
-                            Intent sendIntent = new Intent(Intent.ACTION_SEND);
-                            sendIntent.setType("text/plain");
-                            sendIntent.putExtra(Intent.EXTRA_SUBJECT, "Orbit Social Backup");
-                            sendIntent.putExtra(Intent.EXTRA_TEXT, jsonData);
-                            startActivity(Intent.createChooser(sendIntent, "Save Backup to Google Drive"));
+                            Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                            intent.addCategory(Intent.CATEGORY_OPENABLE);
+                            intent.setType("application/json");
+                            intent.putExtra(Intent.EXTRA_TITLE, fname);
+                            startActivityForResult(intent, REQ_CREATE_DRIVE_BACKUP);
+                            return;
                         } catch (Exception ignored) {}
                     }
+                    shareBackupFallback(jsonData, fname);
                 }
             });
         }
@@ -429,6 +442,39 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void exportToGoogleDrive(final String jsonData, final String filename) {
             exportBackupFile(jsonData, filename);
+        }
+
+        private void shareBackupFallback(String jsonData, String fname) {
+            try {
+                java.io.File cacheFile = new java.io.File(getCacheDir(), fname);
+                java.io.FileOutputStream fos = new java.io.FileOutputStream(cacheFile);
+                fos.write(jsonData.getBytes("UTF-8"));
+                fos.flush();
+                fos.close();
+
+                Intent shareIntent = new Intent(Intent.ACTION_SEND);
+                shareIntent.setType("application/json");
+                shareIntent.putExtra(Intent.EXTRA_SUBJECT, "Orbit Backup: " + fname);
+                shareIntent.putExtra(Intent.EXTRA_TEXT, jsonData);
+                shareIntent.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(cacheFile));
+                shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+                Intent chooser = Intent.createChooser(shareIntent, "Save Backup to Google Drive / Files");
+                chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(chooser);
+
+                if (webView != null) {
+                    webView.evaluateJavascript("if(window.onNativeGoogleDriveSaved)window.onNativeGoogleDriveSaved(true);", null);
+                }
+            } catch (Exception e) {
+                try {
+                    Intent sendIntent = new Intent(Intent.ACTION_SEND);
+                    sendIntent.setType("text/plain");
+                    sendIntent.putExtra(Intent.EXTRA_SUBJECT, "Orbit Social Backup");
+                    sendIntent.putExtra(Intent.EXTRA_TEXT, jsonData);
+                    startActivity(Intent.createChooser(sendIntent, "Save Backup to Google Drive"));
+                } catch (Exception ignored) {}
+            }
         }
 
         @JavascriptInterface
@@ -704,14 +750,51 @@ public class MainActivity extends Activity {
                         contactUri,
                         new String[]{
                             ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-                            ContactsContract.CommonDataKinds.Phone.NUMBER
+                            ContactsContract.CommonDataKinds.Phone.NUMBER,
+                            ContactsContract.CommonDataKinds.Phone.CONTACT_ID
                         },
                         null, null, null
                     );
                     if (cursor != null && cursor.moveToFirst()) {
                         String name = cursor.getString(0);
                         String number = cursor.getString(1);
-                        final String json = "{\"name\":" + escapeJson(name == null ? "" : name) + ",\"phone\":" + escapeJson(number == null ? "" : number) + "}";
+                        String contactId = cursor.getString(2);
+                        final java.util.List<String> allPhones = new java.util.ArrayList<String>();
+                        if (number != null && !number.trim().isEmpty()) {
+                            allPhones.add(number.trim());
+                        }
+                        if (contactId != null && !contactId.trim().isEmpty()) {
+                            Cursor pCur = null;
+                            try {
+                                pCur = getContentResolver().query(
+                                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                                    new String[]{ContactsContract.CommonDataKinds.Phone.NUMBER},
+                                    ContactsContract.CommonDataKinds.Phone.CONTACT_ID + " = ?",
+                                    new String[]{contactId},
+                                    null
+                                );
+                                if (pCur != null) {
+                                    while (pCur.moveToNext()) {
+                                        String pn = pCur.getString(0);
+                                        if (pn != null && !pn.trim().isEmpty() && !allPhones.contains(pn.trim())) {
+                                            allPhones.add(pn.trim());
+                                        }
+                                    }
+                                }
+                            } catch (Exception ignored) {}
+                            finally { if (pCur != null) pCur.close(); }
+                        }
+
+                        StringBuilder phonesJson = new StringBuilder("[");
+                        for (int i = 0; i < allPhones.size(); i++) {
+                            if (i > 0) phonesJson.append(",");
+                            phonesJson.append(escapeJson(allPhones.get(i)));
+                        }
+                        phonesJson.append("]");
+
+                        final String json = "{\"name\":" + escapeJson(name == null ? "" : name)
+                                + ",\"phone\":" + escapeJson(number == null ? "" : number)
+                                + ",\"phones\":" + phonesJson.toString() + "}";
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {

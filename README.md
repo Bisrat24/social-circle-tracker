@@ -24,15 +24,15 @@ We all experience this:
 
 ## 📱 Android Version & How to Install
 
-### 🌐 Live Cloud Web App & Direct APK Download (Version 1.0.2)
+### 🌐 Live Cloud Web App & Direct APK Download (Version 1.0.3)
 
 | Platform | Link | Description |
 |---|---|---|
-| **Live Cloud Web App** | [https://garnet-calf-dpyfb.ship.place/](https://garnet-calf-dpyfb.ship.place/) | 24/7 HTTPS cloud deployment with instant mobile & desktop access |
-| **Direct APK Download** | [https://garnet-calf-dpyfb.ship.place/Orbit.apk](https://garnet-calf-dpyfb.ship.place/Orbit.apk) | Native signed Android APK (0.18 MB, v1+v2+v3 signatures, offline-capable) |
+| **Live Cloud Web App** | [https://aerial-latency-5do0q.ship.place/](https://aerial-latency-5do0q.ship.place/) | 24/7 HTTPS cloud deployment with instant mobile & desktop access |
+| **Direct APK Download** | [https://aerial-latency-5do0q.ship.place/Orbit.apk](https://aerial-latency-5do0q.ship.place/Orbit.apk) | Native signed Android APK (0.18 MB, v1+v2+v3 signatures, offline-capable) |
 
 #### How to install it on your Android phone:
-1. Tap the **[Download Orbit.apk](https://garnet-calf-dpyfb.ship.place/Orbit.apk)** link on your phone.
+1. Tap the **[Download Orbit.apk](https://aerial-latency-5do0q.ship.place/Orbit.apk)** link on your phone.
 2. Tap the downloaded file to install/update the app.
 3. Grant **Contacts** and **Call Logs** permissions when prompted to enable 1-tap friend adding and call history auto-sync.
 4. Enjoy easy relationship management!

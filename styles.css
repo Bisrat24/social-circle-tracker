@@ -3200,5 +3200,228 @@ body.theme-light .brand-text h1 {
   }
 }
 
+/* ==========================================================================
+   CONTACTS & CALL LOGS QUICK IMPORT STYLING
+   ========================================================================== */
+
+.contact-import-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 1.15rem;
+  padding: 0.75rem 0.95rem;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px dashed rgba(99, 102, 241, 0.35);
+  border-radius: var(--radius-md);
+  align-items: center;
+}
+
+.contact-import-actions .btn {
+  font-size: 0.85rem;
+}
+
+.call-logs-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.call-logs-filter-group select {
+  padding: 0.45rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-size: 0.84rem;
+}
+
+.call-logs-list, .device-contacts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  max-height: 440px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.call-log-card, .device-contact-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0.85rem 1rem;
+  gap: 0.75rem;
+}
+
+.call-log-left, .device-contact-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.call-icon-badge {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  flex-shrink: 0;
+}
+
+.call-icon-incoming {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #10b981;
+}
+
+.call-icon-outgoing {
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: #3b82f6;
+}
+
+.call-icon-missed {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+.call-details, .device-contact-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.call-details h4, .device-contact-details h4 {
+  font-size: 0.96rem;
+  font-weight: 700;
+  margin: 0;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.call-meta, .device-contact-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+
+.call-actions, .device-contact-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+
+.call-status-tag {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+}
+
+.tag-friend {
+  background: rgba(99, 102, 241, 0.18);
+  color: var(--accent-purple);
+}
+
+.tag-logged {
+  background: rgba(16, 185, 129, 0.18);
+  color: #10b981;
+}
+
+.tag-new {
+  background: rgba(245, 158, 11, 0.18);
+  color: #f59e0b;
+}
+
+.device-contacts-search-box {
+  margin-bottom: 0.85rem;
+}
+
+.device-contacts-search-box input {
+  width: 100%;
+  padding: 0.65rem 0.95rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+
+.interaction-call-suggestion {
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 0.95rem;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.interaction-call-suggestion .suggestion-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 700;
+  font-size: 0.84rem;
+  color: #10b981;
+}
+
+.interaction-call-suggestion .suggestion-content {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 600px) {
+  .contact-import-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .call-log-card, .device-contact-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+  }
+  .call-actions, .device-contact-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .call-actions .btn, .device-contact-actions .btn {
+    flex: 1;
+    min-height: 38px;
+    font-size: 0.78rem;
+    justify-content: center;
+  }
+  .call-logs-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .call-logs-toolbar .btn, .call-logs-filter-group select {
+    width: 100%;
+  }
+}
+
 
 

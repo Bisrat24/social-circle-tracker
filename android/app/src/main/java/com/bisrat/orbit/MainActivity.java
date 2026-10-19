@@ -12,7 +12,10 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Vibrator;
+import android.database.Cursor;
+import android.provider.CallLog;
 import android.provider.CalendarContract;
+import android.provider.ContactsContract;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -24,6 +27,10 @@ import android.webkit.WebViewClient;
 public class MainActivity extends Activity {
     private WebView webView;
     private static final String CHANNEL_ID = "orbit_reminders";
+    private static final int REQ_PERM_CONTACTS = 201;
+    private static final int REQ_PERM_CALL_LOG = 202;
+    private static final int REQ_PICK_CONTACT = 203;
+    private static final int REQ_PERM_ALL = 204;
 
     public class AndroidBridge {
         @JavascriptInterface
@@ -151,6 +158,196 @@ public class MainActivity extends Activity {
                     v.vibrate(ms);
                 }
             } catch (Exception ignored) {}
+        }
+
+        @JavascriptInterface
+        public boolean hasContactsPermission() {
+            if (Build.VERSION.SDK_INT >= 23) {
+                return checkSelfPermission("android.permission.READ_CONTACTS") == PackageManager.PERMISSION_GRANTED;
+            }
+            return true;
+        }
+
+        @JavascriptInterface
+        public void requestContactsPermission() {
+            if (Build.VERSION.SDK_INT >= 23) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            requestPermissions(new String[]{"android.permission.READ_CONTACTS"}, REQ_PERM_CONTACTS);
+                        } catch (Exception ignored) {}
+                    }
+                });
+            }
+        }
+
+        @JavascriptInterface
+        public boolean hasCallLogPermission() {
+            if (Build.VERSION.SDK_INT >= 23) {
+                return checkSelfPermission("android.permission.READ_CALL_LOG") == PackageManager.PERMISSION_GRANTED;
+            }
+            return true;
+        }
+
+        @JavascriptInterface
+        public void requestCallLogPermission() {
+            if (Build.VERSION.SDK_INT >= 23) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            requestPermissions(new String[]{"android.permission.READ_CALL_LOG"}, REQ_PERM_CALL_LOG);
+                        } catch (Exception ignored) {}
+                    }
+                });
+            }
+        }
+
+        @JavascriptInterface
+        public void requestAllPhonePermissions() {
+            if (Build.VERSION.SDK_INT >= 23) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            requestPermissions(new String[]{
+                                "android.permission.READ_CONTACTS",
+                                "android.permission.READ_CALL_LOG"
+                            }, REQ_PERM_ALL);
+                        } catch (Exception ignored) {}
+                    }
+                });
+            }
+        }
+
+        @JavascriptInterface
+        public void pickContact() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Intent intent = new Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI);
+                        startActivityForResult(intent, REQ_PICK_CONTACT);
+                    } catch (Exception e) {
+                        try {
+                            Intent intent = new Intent(Intent.ACTION_PICK, ContactsContract.Contacts.CONTENT_URI);
+                            startActivityForResult(intent, REQ_PICK_CONTACT);
+                        } catch (Exception ignored) {}
+                    }
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public String getDeviceContacts(int limit) {
+            if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission("android.permission.READ_CONTACTS") != PackageManager.PERMISSION_GRANTED) {
+                requestContactsPermission();
+                return "[]";
+            }
+            StringBuilder sb = new StringBuilder("[");
+            Cursor cursor = null;
+            try {
+                int max = limit > 0 ? limit : 300;
+                cursor = getContentResolver().query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    new String[]{
+                        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                        ContactsContract.CommonDataKinds.Phone.NUMBER
+                    },
+                    null,
+                    null,
+                    ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME + " ASC"
+                );
+                if (cursor != null) {
+                    int count = 0;
+                    boolean first = true;
+                    while (cursor.moveToNext() && count < max) {
+                        String name = cursor.getString(0);
+                        String number = cursor.getString(1);
+                        if (number != null && !number.trim().isEmpty()) {
+                            if (!first) sb.append(",");
+                            first = false;
+                            sb.append("{\"name\":").append(escapeJson(name == null ? "" : name))
+                              .append(",\"phone\":").append(escapeJson(number))
+                              .append("}");
+                            count++;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (cursor != null) cursor.close();
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+
+        @JavascriptInterface
+        public String getRecentCallLogs(int limit) {
+            if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission("android.permission.READ_CALL_LOG") != PackageManager.PERMISSION_GRANTED) {
+                requestCallLogPermission();
+                return "[]";
+            }
+            StringBuilder sb = new StringBuilder("[");
+            Cursor cursor = null;
+            try {
+                int max = limit > 0 ? limit : 100;
+                cursor = getContentResolver().query(
+                    CallLog.Calls.CONTENT_URI,
+                    new String[]{
+                        CallLog.Calls.NUMBER,
+                        CallLog.Calls.CACHED_NAME,
+                        CallLog.Calls.TYPE,
+                        CallLog.Calls.DATE,
+                        CallLog.Calls.DURATION
+                    },
+                    null,
+                    null,
+                    CallLog.Calls.DATE + " DESC"
+                );
+                if (cursor != null) {
+                    int count = 0;
+                    boolean first = true;
+                    while (cursor.moveToNext() && count < max) {
+                        String number = cursor.getString(0);
+                        String cachedName = cursor.getString(1);
+                        int typeInt = cursor.getInt(2);
+                        long dateMs = cursor.getLong(3);
+                        long durationSec = cursor.getLong(4);
+
+                        String typeStr = "call";
+                        String direction = "me";
+                        if (typeInt == CallLog.Calls.INCOMING_TYPE) {
+                            direction = "them";
+                            typeStr = "call";
+                        } else if (typeInt == CallLog.Calls.OUTGOING_TYPE) {
+                            direction = "me";
+                            typeStr = "call";
+                        } else if (typeInt == CallLog.Calls.MISSED_TYPE || typeInt == CallLog.Calls.REJECTED_TYPE) {
+                            direction = "them";
+                            typeStr = "missed";
+                        }
+
+                        if (!first) sb.append(",");
+                        first = false;
+                        sb.append("{")
+                          .append("\"number\":").append(escapeJson(number == null ? "" : number)).append(",")
+                          .append("\"cachedName\":").append(escapeJson(cachedName == null ? "" : cachedName)).append(",")
+                          .append("\"type\":").append(escapeJson(typeStr)).append(",")
+                          .append("\"direction\":").append(escapeJson(direction)).append(",")
+                          .append("\"date\":").append(dateMs).append(",")
+                          .append("\"duration\":").append(durationSec)
+                          .append("}");
+                        count++;
+                    }
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (cursor != null) cursor.close();
+            }
+            sb.append("]");
+            return sb.toString();
         }
 
         @JavascriptInterface
@@ -282,5 +479,101 @@ public class MainActivity extends Activity {
             webView.destroy();
         }
         super.onDestroy();
+    }
+
+    private String escapeJson(String s) {
+        if (s == null) return "\"\"";
+        StringBuilder sb = new StringBuilder("\"");
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"': sb.append("\\\""); break;
+                case '\\': sb.append("\\\\"); break;
+                case '\b': sb.append("\\b"); break;
+                case '\f': sb.append("\\f"); break;
+                case '\n': sb.append("\\n"); break;
+                case '\r': sb.append("\\r"); break;
+                case '\t': sb.append("\\t"); break;
+                default:
+                    if (c < ' ') {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+            }
+        }
+        sb.append("\"");
+        return sb.toString();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_PICK_CONTACT && resultCode == RESULT_OK && data != null) {
+            Uri contactUri = data.getData();
+            if (contactUri != null) {
+                Cursor cursor = null;
+                try {
+                    cursor = getContentResolver().query(
+                        contactUri,
+                        new String[]{
+                            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                            ContactsContract.CommonDataKinds.Phone.NUMBER
+                        },
+                        null, null, null
+                    );
+                    if (cursor != null && cursor.moveToFirst()) {
+                        String name = cursor.getString(0);
+                        String number = cursor.getString(1);
+                        final String json = "{\"name\":" + escapeJson(name == null ? "" : name) + ",\"phone\":" + escapeJson(number == null ? "" : number) + "}";
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (webView != null) {
+                                    webView.evaluateJavascript("if(window.onNativeContactPicked)window.onNativeContactPicked(" + json + ");", null);
+                                }
+                            }
+                        });
+                    }
+                } catch (Exception ignored) {
+                } finally {
+                    if (cursor != null) cursor.close();
+                }
+            }
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        final boolean granted = grantResults != null && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        if (requestCode == REQ_PERM_CONTACTS) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (webView != null) {
+                        webView.evaluateJavascript("if(window.onNativeContactsPermissionResult)window.onNativeContactsPermissionResult(" + granted + ");", null);
+                    }
+                }
+            });
+        } else if (requestCode == REQ_PERM_CALL_LOG) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (webView != null) {
+                        webView.evaluateJavascript("if(window.onNativeCallLogPermissionResult)window.onNativeCallLogPermissionResult(" + granted + ");", null);
+                    }
+                }
+            });
+        } else if (requestCode == REQ_PERM_ALL) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (webView != null) {
+                        webView.evaluateJavascript("if(window.onNativeAllPermissionsResult)window.onNativeAllPermissionsResult();", null);
+                    }
+                }
+            });
+        }
     }
 }

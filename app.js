@@ -213,6 +213,7 @@ class SocialCircleApp {
     this.registerServiceWorker();
     this.initNotifications();
     this.initOfflineHandling();
+    this.initNativePhoneIntegration();
     try {
       if (this.googleSync) {
         this.googleSync.initGoogleIdentity();
@@ -765,6 +766,7 @@ class SocialCircleApp {
     this.renderContactsGrid();
     this.renderCalendarSchedule();
     this.updateCalendarBadges();
+    this.updateCallLogsBadges();
   }
 
   renderStats() {
@@ -1072,7 +1074,7 @@ class SocialCircleApp {
   // INTERACTION LOGGING MODAL
   // ========================================================================
 
-  openLogInteractionModal(contactId = null) {
+  openLogInteractionModal(contactId = null, callPrefill = null) {
     const modal = document.getElementById('interactionModal');
     const pickerWrap = document.getElementById('logContactPickerWrap');
     const select = document.getElementById('logContactSelect');
@@ -1118,6 +1120,69 @@ class SocialCircleApp {
 
     document.getElementById('promiseDeadlineContainer').style.display = 'none';
     document.getElementById('reciprocityFieldGroup').style.display = 'block';
+
+    // Apply callPrefill if passed
+    if (callPrefill) {
+      if (callPrefill.date) {
+        const cd = new Date(callPrefill.date);
+        document.getElementById('interactionDate').value = new Date(cd.getTime() - cd.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      }
+      if (callPrefill.summary) {
+        document.getElementById('interactionSummary').value = callPrefill.summary;
+      }
+      if (callPrefill.direction) {
+        document.querySelectorAll('.radio-card').forEach(rc => {
+          rc.classList.remove('selected');
+          const radio = rc.querySelector('input');
+          if (radio.value === callPrefill.direction) {
+            radio.checked = true;
+            rc.classList.add('selected');
+          }
+        });
+      }
+    }
+
+    // Check for recent unlogged call suggestions with this friend
+    const suggestionBox = document.getElementById('recentCallSuggestionBox');
+    const targetContactId = contactId || (select.value ? select.value : null);
+    const targetContact = this.contacts.find(c => c.id === targetContactId);
+
+    if (suggestionBox && targetContact && targetContact.phone && !callPrefill) {
+      const calls = this.getDeviceCallLogs(20);
+      const recentCall = calls.find(call => {
+        return this.normalizePhoneNumber(call.number) === this.normalizePhoneNumber(targetContact.phone);
+      });
+
+      if (recentCall && (Date.now() - recentCall.date) < 7 * 24 * 3600 * 1000) {
+        const isMissed = recentCall.type === 'missed';
+        const d = new Date(recentCall.date);
+        suggestionBox.style.display = 'flex';
+        document.getElementById('recentCallSuggestionContent').innerHTML = `
+          <strong>${recentCall.direction === 'them' ? '📥 Incoming' : '📤 Outgoing'} ${isMissed ? 'Missed Call' : 'Call'}</strong> 
+          • ${d.toLocaleDateString([], {month:'short', day:'numeric'})} at ${d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} 
+          (${this.formatDuration(recentCall.duration)})
+        `;
+        document.getElementById('btnApplyCallSuggestion').onclick = () => {
+          document.getElementById('interactionDate').value = new Date(recentCall.date - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+          document.getElementById('interactionSummary').value = `${recentCall.direction === 'them' ? 'Incoming' : 'Outgoing'} call (${this.formatDuration(recentCall.duration)})`;
+          
+          document.querySelectorAll('.radio-card').forEach(rc => {
+            rc.classList.remove('selected');
+            const radio = rc.querySelector('input');
+            if (radio.value === recentCall.direction) {
+              radio.checked = true;
+              rc.classList.add('selected');
+            }
+          });
+          suggestionBox.style.display = 'none';
+          this.showToast('⚡ Auto-filled details from call log!', 'info');
+        };
+      } else {
+        suggestionBox.style.display = 'none';
+      }
+    } else if (suggestionBox) {
+      suggestionBox.style.display = 'none';
+    }
 
     modal.style.display = 'flex';
   }
@@ -1442,10 +1507,11 @@ class SocialCircleApp {
   // ADD / EDIT CONTACT MODAL
   // ========================================================================
 
-  openAddEditContactModal(contactId = null) {
+  openAddEditContactModal(contactId = null, prefill = null) {
     const modal = document.getElementById('contactModal');
     const form = document.getElementById('contactForm');
     const title = document.getElementById('contactModalTitle');
+    const importActions = document.getElementById('contactImportActionsWrap');
     form.reset();
 
     const slider = document.getElementById('formInitialLevel');
@@ -1464,6 +1530,7 @@ class SocialCircleApp {
       const contact = this.contacts.find(c => c.id === contactId);
       if (!contact) return;
       title.textContent = 'Edit Friend';
+      if (importActions) importActions.style.display = 'none';
       document.getElementById('editContactId').value = contact.id;
       document.getElementById('formName').value = contact.name;
       document.getElementById('formNickname').value = contact.nickname || '';
@@ -1480,7 +1547,14 @@ class SocialCircleApp {
       updateSliderUI(m.levelDef.level);
     } else {
       title.textContent = 'Add New Friend';
+      if (importActions) importActions.style.display = 'flex';
       document.getElementById('editContactId').value = '';
+      if (prefill) {
+        if (prefill.name) document.getElementById('formName').value = prefill.name;
+        if (prefill.phone) document.getElementById('formPhone').value = prefill.phone;
+        if (prefill.notes) document.getElementById('formNotes').value = prefill.notes;
+        if (prefill.circle) document.getElementById('formCircle').value = prefill.circle;
+      }
       slider.value = 5;
       updateSliderUI(5);
     }
@@ -2126,6 +2200,574 @@ class SocialCircleApp {
   }
 
   // ========================================================================
+  // PHONE CONTACTS & CALL LOGS ENGINE
+  // ========================================================================
+
+  initNativePhoneIntegration() {
+    // 1. Listen for native Android contact picker result
+    window.onNativeContactPicked = (contact) => {
+      if (!contact) return;
+      this.applyPickedContact(contact);
+    };
+
+    // 2. Listen for permission grant callbacks
+    window.onNativeContactsPermissionResult = (granted) => {
+      if (granted) {
+        this.showToast('📱 Device contacts access granted!', 'success');
+        this.loadDeviceContacts();
+      } else {
+        this.showToast('Contacts permission was denied.', 'warning');
+      }
+    };
+
+    window.onNativeCallLogPermissionResult = (granted) => {
+      if (granted) {
+        this.showToast('📞 Call log access granted!', 'success');
+        this.renderCallLogs();
+        this.updateCallLogsBadges();
+      } else {
+        this.showToast('Call log permission was denied.', 'warning');
+      }
+    };
+
+    window.onNativeAllPermissionsResult = () => {
+      this.showToast('All phone permissions granted!', 'success');
+      this.renderCallLogs();
+      this.updateCallLogsBadges();
+    };
+
+    // Initial check for unlogged calls badge
+    setTimeout(() => {
+      this.updateCallLogsBadges();
+    }, 1000);
+  }
+
+  normalizePhoneNumber(phone) {
+    if (!phone) return '';
+    const digits = String(phone).replace(/\D/g, '');
+    return digits.length >= 7 ? digits.slice(-7) : digits;
+  }
+
+  findContactByPhone(phone) {
+    if (!phone) return null;
+    const target = this.normalizePhoneNumber(phone);
+    if (!target || target.length < 5) return null;
+    return this.contacts.find(c => {
+      if (!c.phone) return false;
+      const cNorm = this.normalizePhoneNumber(c.phone);
+      return cNorm === target || (cNorm.length >= 7 && target.length >= 7 && (cNorm.endsWith(target) || target.endsWith(cNorm)));
+    });
+  }
+
+  formatDuration(seconds) {
+    const sec = parseInt(seconds, 10) || 0;
+    if (sec <= 0) return '0s';
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    if (m > 0) return `${m}m ${s > 0 ? s + 's' : ''}`.trim();
+    return `${s}s`;
+  }
+
+  // Pick contact using native Android picker or Web Contacts API
+  pickContactFromPhone() {
+    if (window.AndroidBridge && typeof window.AndroidBridge.pickContact === 'function') {
+      try {
+        window.AndroidBridge.pickContact();
+        return;
+      } catch (e) {
+        console.warn('AndroidBridge.pickContact error:', e);
+      }
+    }
+
+    if (navigator.contacts && 'select' in navigator.contacts) {
+      navigator.contacts.select(['name', 'tel'], { multiple: false })
+        .then(contacts => {
+          if (contacts && contacts.length > 0) {
+            const c = contacts[0];
+            const name = (c.name && c.name[0]) || '';
+            const phone = (c.tel && c.tel[0]) || '';
+            this.applyPickedContact({ name, phone });
+          }
+        })
+        .catch(() => {
+          this.openDeviceContactsModal();
+        });
+      return;
+    }
+
+    this.openDeviceContactsModal();
+  }
+
+  applyPickedContact(contact) {
+    if (!contact) return;
+    const modal = document.getElementById('contactModal');
+    if (!modal || modal.style.display === 'none') {
+      this.openAddEditContactModal(null, {
+        name: contact.name || '',
+        phone: contact.phone || ''
+      });
+    } else {
+      if (contact.name) document.getElementById('formName').value = contact.name;
+      if (contact.phone) document.getElementById('formPhone').value = contact.phone;
+      const circleSel = document.getElementById('formCircle');
+      if (circleSel) circleSel.focus();
+    }
+    this.showToast(`📱 Picked: ${contact.name || contact.phone}`, 'success');
+  }
+
+  openDeviceContactsModal() {
+    const modal = document.getElementById('deviceContactsModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    this.loadDeviceContacts();
+  }
+
+  loadDeviceContacts(filterText = '') {
+    const list = document.getElementById('deviceContactsList');
+    const notice = document.getElementById('deviceContactsStatusNotice');
+    if (!list) return;
+
+    let deviceContacts = [];
+
+    if (window.AndroidBridge && typeof window.AndroidBridge.getDeviceContacts === 'function') {
+      try {
+        const raw = window.AndroidBridge.getDeviceContacts(300);
+        deviceContacts = JSON.parse(raw);
+      } catch (e) {
+        console.warn('Error reading device contacts:', e);
+      }
+    }
+
+    // Fallback: If running on browser without native contacts or empty
+    if (!deviceContacts || deviceContacts.length === 0) {
+      if (notice) {
+        notice.style.display = 'block';
+        notice.innerHTML = `
+          <div class="calendar-sync-notice" style="margin-bottom:0.5rem;">
+            <span>ℹ️ <strong>Address Book:</strong> On Android devices, contacts are loaded directly from your phone. Below are demo/sample contacts you can easily import.</span>
+          </div>
+        `;
+      }
+      deviceContacts = [
+        { name: 'Sarah Miller', phone: '+1 555-0819' },
+        { name: 'Liam O\'Connor', phone: '+1 555-0422' },
+        { name: 'Chloe Dubois', phone: '+1 555-0633' },
+        { name: 'Tariq Hassan', phone: '+1 555-0744' },
+        { name: 'Maya Lin', phone: '+1 555-0955' }
+      ];
+    } else {
+      if (notice) notice.style.display = 'none';
+    }
+
+    if (filterText) {
+      const q = filterText.toLowerCase();
+      deviceContacts = deviceContacts.filter(c => 
+        (c.name && c.name.toLowerCase().includes(q)) || 
+        (c.phone && c.phone.includes(q))
+      );
+    }
+
+    if (deviceContacts.length === 0) {
+      list.innerHTML = `<div class="empty-state" style="padding:1.5rem;"><p>No contacts found matching "${this.escapeHtml(filterText)}".</p></div>`;
+      return;
+    }
+
+    list.innerHTML = deviceContacts.map(c => {
+      const existing = this.findContactByPhone(c.phone);
+      return `
+        <div class="device-contact-card">
+          <div class="device-contact-left">
+            <div class="avatar" style="width:38px; height:38px; border-radius:50%; background:${this.getAvatarGradient(c.name || 'Friend')}; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:bold; font-size:0.85rem; flex-shrink:0;">
+              ${this.getInitials(c.name || 'Friend')}
+            </div>
+            <div class="device-contact-details">
+              <h4>
+                ${this.escapeHtml(c.name || 'Unknown Name')}
+                ${existing ? `<span class="call-status-tag tag-friend">In Orbit (${CIRCLE_LABELS[existing.circle]?.label || 'Friend'})</span>` : ''}
+              </h4>
+              <div class="device-contact-meta">
+                <span>📞 ${this.escapeHtml(c.phone)}</span>
+              </div>
+            </div>
+          </div>
+          <div class="device-contact-actions">
+            ${existing ? `
+              <button class="btn btn-sm btn-ghost" disabled>✓ Added</button>
+            ` : `
+              <button class="btn btn-sm btn-primary btn-add-device-contact" data-name="${this.escapeHtml(c.name)}" data-phone="${this.escapeHtml(c.phone)}">
+                ➕ Add Friend
+              </button>
+            `}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    list.querySelectorAll('.btn-add-device-contact').forEach(btn => {
+      btn.onclick = () => {
+        const name = btn.dataset.name;
+        const phone = btn.dataset.phone;
+        this.closeModal('deviceContactsModal');
+        this.openAddEditContactModal(null, { name, phone });
+      };
+    });
+  }
+
+  // Read call logs from native bridge or fallback
+  getDeviceCallLogs(limit = 100) {
+    if (window.AndroidBridge && typeof window.AndroidBridge.getRecentCallLogs === 'function') {
+      try {
+        const raw = window.AndroidBridge.getRecentCallLogs(limit);
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      } catch (e) {
+        console.warn('Error fetching native call logs:', e);
+      }
+    }
+
+    // Web Fallback Demo Call Logs
+    const now = Date.now();
+    return [
+      {
+        number: '+1 555-0144',
+        cachedName: 'Marcus Vance',
+        type: 'call',
+        direction: 'them',
+        date: now - 3 * 3600 * 1000,
+        duration: 840
+      },
+      {
+        number: '+1 555-0891',
+        cachedName: 'Elena Rostova',
+        type: 'call',
+        direction: 'me',
+        date: now - 26 * 3600 * 1000,
+        duration: 1250
+      },
+      {
+        number: '+1 555-0329',
+        cachedName: 'David Kim',
+        type: 'missed',
+        direction: 'them',
+        date: now - 48 * 3600 * 1000,
+        duration: 0
+      },
+      {
+        number: '+1 555-9182',
+        cachedName: 'Jordan Taylor',
+        type: 'call',
+        direction: 'them',
+        date: now - 72 * 3600 * 1000,
+        duration: 320
+      }
+    ];
+  }
+
+  openCallLogsModal() {
+    const modal = document.getElementById('callLogsModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    this.renderCallLogs();
+  }
+
+  renderCallLogs(filter = null) {
+    const list = document.getElementById('callLogsList');
+    const notice = document.getElementById('callLogsStatusNotice');
+    const filterSelect = document.getElementById('callLogsFilter');
+    if (!list) return;
+
+    const currentFilter = filter || (filterSelect ? filterSelect.value : 'unlogged');
+    const rawCalls = this.getDeviceCallLogs(100);
+
+    const isNativeAndroid = !!(window.AndroidBridge && typeof window.AndroidBridge.getRecentCallLogs === 'function');
+    if (!isNativeAndroid && notice) {
+      notice.style.display = 'block';
+      notice.innerHTML = `
+        <div class="calendar-sync-notice">
+          <span>ℹ️ <strong>Call Logs:</strong> On your Android device, Orbit syncs real phone call logs. Below is your active call history ready to log or auto-sync.</span>
+        </div>
+      `;
+    } else if (notice) {
+      notice.style.display = 'none';
+    }
+
+    let callsWithStatus = rawCalls.map(call => {
+      const matchedContact = this.findContactByPhone(call.number);
+      let isLogged = false;
+      if (matchedContact && Array.isArray(matchedContact.interactions)) {
+        isLogged = matchedContact.interactions.some(i => {
+          if (i.callLogDate && i.callLogDate === call.date) return true;
+          const iDate = new Date(i.date).getTime();
+          return Math.abs(iDate - call.date) < 180000;
+        });
+      }
+      return {
+        ...call,
+        matchedContact,
+        isLogged
+      };
+    });
+
+    // Apply Filter
+    if (currentFilter === 'friends') {
+      callsWithStatus = callsWithStatus.filter(c => c.matchedContact);
+    } else if (currentFilter === 'unlogged') {
+      callsWithStatus = callsWithStatus.filter(c => c.matchedContact && !c.isLogged);
+    } else if (currentFilter === 'missed') {
+      callsWithStatus = callsWithStatus.filter(c => c.type === 'missed');
+    } else if (currentFilter === 'unknown') {
+      callsWithStatus = callsWithStatus.filter(c => !c.matchedContact);
+    }
+
+    if (callsWithStatus.length === 0) {
+      list.innerHTML = `
+        <div class="empty-state" style="padding:2rem 1rem;">
+          <div class="empty-illustration">📞</div>
+          <h3>No calls matching filter</h3>
+          <p>Change your filter above or tap "Refresh" to re-scan phone call logs.</p>
+        </div>
+      `;
+      return;
+    }
+
+    list.innerHTML = callsWithStatus.map((call, idx) => {
+      const d = new Date(call.date);
+      const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const dateStr = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      const isMissed = call.type === 'missed';
+      const isIncoming = call.direction === 'them' && !isMissed;
+      const isOutgoing = call.direction === 'me' && !isMissed;
+
+      let iconClass = 'call-icon-outgoing';
+      let iconSymbol = '📤';
+      let typeLabel = 'Outgoing Call';
+
+      if (isIncoming) {
+        iconClass = 'call-icon-incoming';
+        iconSymbol = '📥';
+        typeLabel = 'Incoming Call';
+      } else if (isMissed) {
+        iconClass = 'call-icon-missed';
+        iconSymbol = '📵';
+        typeLabel = 'Missed Call';
+      }
+
+      const displayName = call.matchedContact ? call.matchedContact.name : (call.cachedName || call.number);
+
+      return `
+        <div class="call-log-card" data-index="${idx}">
+          <div class="call-log-left">
+            <div class="call-icon-badge ${iconClass}">
+              <span>${iconSymbol}</span>
+            </div>
+            <div class="call-details">
+              <h4>
+                ${this.escapeHtml(displayName)}
+                ${call.matchedContact ? `
+                  <span class="call-status-tag tag-friend">👤 ${this.escapeHtml(CIRCLE_LABELS[call.matchedContact.circle]?.label || 'Friend')}</span>
+                ` : `
+                  <span class="call-status-tag tag-new">New Number</span>
+                `}
+                ${call.isLogged ? `
+                  <span class="call-status-tag tag-logged">✓ Logged</span>
+                ` : ''}
+              </h4>
+              <div class="call-meta">
+                <span>${typeLabel}</span>
+                <span>•</span>
+                <span>📅 ${dateStr} at ${timeStr}</span>
+                <span>•</span>
+                <span>⏱️ ${isMissed ? 'No answer' : this.formatDuration(call.duration)}</span>
+                ${call.matchedContact && call.matchedContact.phone !== call.number ? `<span>• 📞 ${this.escapeHtml(call.number)}</span>` : ''}
+              </div>
+            </div>
+          </div>
+          <div class="call-actions">
+            ${call.matchedContact ? (
+              call.isLogged ? `
+                <button class="btn btn-sm btn-ghost" disabled>✓ In Orbit</button>
+              ` : (
+                isMissed ? `
+                  <button class="btn btn-sm btn-secondary btn-log-missed-call" data-contact-id="${call.matchedContact.id}" data-date="${call.date}" title="Set callback reminder for missed call">
+                    ⏳ Owe Call
+                  </button>
+                ` : `
+                  <button class="btn btn-sm btn-primary btn-quick-log-call" data-contact-id="${call.matchedContact.id}" data-direction="${call.direction}" data-duration="${call.duration}" data-date="${call.date}">
+                    ⚡ Log Catch-up
+                  </button>
+                `
+              )
+            ) : `
+              <button class="btn btn-sm btn-secondary btn-add-friend-from-call" data-name="${this.escapeHtml(call.cachedName || '')}" data-phone="${this.escapeHtml(call.number)}" data-date="${call.date}">
+                ➕ Add Friend
+              </button>
+            `}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Bind action buttons
+    list.querySelectorAll('.btn-quick-log-call').forEach(btn => {
+      btn.onclick = () => {
+        const contactId = btn.dataset.contactId;
+        const direction = btn.dataset.direction;
+        const duration = parseInt(btn.dataset.duration, 10);
+        const date = parseInt(btn.dataset.date, 10);
+        this.logCallInteraction({ contactId, direction, duration, date });
+        this.renderCallLogs();
+      };
+    });
+
+    list.querySelectorAll('.btn-log-missed-call').forEach(btn => {
+      btn.onclick = () => {
+        const contactId = btn.dataset.contactId;
+        const date = parseInt(btn.dataset.date, 10);
+        const contact = this.contacts.find(c => c.id === contactId);
+        if (contact) {
+          contact.promisedCall = {
+            isPromised: true,
+            deadline: new Date(Date.now() + 4 * 3600 * 1000).toISOString(),
+            reason: `Missed call on ${new Date(date).toLocaleDateString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}`
+          };
+          this.saveContacts();
+          this.render();
+          this.showToast(`⏳ Set callback reminder for ${contact.name}!`, 'warning');
+          this.renderCallLogs();
+        }
+      };
+    });
+
+    list.querySelectorAll('.btn-add-friend-from-call').forEach(btn => {
+      btn.onclick = () => {
+        const name = btn.dataset.name;
+        const phone = btn.dataset.phone;
+        const date = parseInt(btn.dataset.date, 10);
+        this.closeModal('callLogsModal');
+        this.openAddEditContactModal(null, {
+          name: name || '',
+          phone: phone || '',
+          notes: `Added from call log (${new Date(date).toLocaleDateString()})`
+        });
+      };
+    });
+  }
+
+  logCallInteraction({ contactId, direction, duration, date }) {
+    const contact = this.contacts.find(c => c.id === contactId);
+    if (!contact) return;
+
+    const durSec = duration || 0;
+    const isThey = direction === 'them';
+    const xpGained = 25 + (isThey ? 15 : 0);
+
+    const interaction = {
+      id: 'i_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+      type: 'call',
+      initiator: direction,
+      date: new Date(date).toISOString(),
+      mood: durSec > 300 ? 'great' : (durSec > 60 ? 'good' : 'quick'),
+      summary: `${isThey ? 'Incoming' : 'Outgoing'} phone call (${this.formatDuration(durSec)})`,
+      nextTopics: contact.nextTopicsToAsk || '',
+      callLogDate: date
+    };
+
+    if (!Array.isArray(contact.interactions)) contact.interactions = [];
+    contact.interactions.unshift(interaction);
+    contact.currentXp = Math.min(1000, (contact.currentXp || 0) + xpGained);
+
+    // If promise was active, fulfill it
+    if (contact.promisedCall && contact.promisedCall.isPromised) {
+      contact.promisedCall = null;
+    }
+
+    this.saveContacts();
+    this.render();
+    this.showToast(`📞 Logged call with ${contact.name}! (+${xpGained} XP)`, 'success');
+    this.playLevelUpSound();
+    this.updateCallLogsBadges();
+  }
+
+  autoSyncUnloggedCalls() {
+    const rawCalls = this.getDeviceCallLogs(100);
+    let count = 0;
+
+    rawCalls.forEach(call => {
+      if (call.type === 'missed') return;
+      const contact = this.findContactByPhone(call.number);
+      if (!contact) return;
+
+      if (!Array.isArray(contact.interactions)) contact.interactions = [];
+      const isAlreadyLogged = contact.interactions.some(i => {
+        if (i.callLogDate && i.callLogDate === call.date) return true;
+        const iDate = new Date(i.date).getTime();
+        return Math.abs(iDate - call.date) < 180000;
+      });
+
+      if (!isAlreadyLogged) {
+        const isThey = call.direction === 'them';
+        const xpGained = 25 + (isThey ? 15 : 0);
+        contact.interactions.unshift({
+          id: 'i_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+          type: 'call',
+          initiator: call.direction,
+          date: new Date(call.date).toISOString(),
+          mood: call.duration > 300 ? 'great' : 'good',
+          summary: `${isThey ? 'Incoming' : 'Outgoing'} call (${this.formatDuration(call.duration)})`,
+          nextTopics: contact.nextTopicsToAsk || '',
+          callLogDate: call.date
+        });
+        contact.currentXp = Math.min(1000, (contact.currentXp || 0) + xpGained);
+        if (contact.promisedCall) contact.promisedCall = null;
+        count++;
+      }
+    });
+
+    if (count > 0) {
+      this.saveContacts();
+      this.render();
+      this.renderCallLogs();
+      this.updateCallLogsBadges();
+      this.showToast(`⚡ Automatically logged ${count} calls from phone history!`, 'success');
+      this.playLevelUpSound();
+    } else {
+      this.showToast('All calls with friends are already up to date!', 'info');
+    }
+  }
+
+  updateCallLogsBadges() {
+    const rawCalls = this.getDeviceCallLogs(100);
+    let unloggedCount = 0;
+
+    rawCalls.forEach(call => {
+      const contact = this.findContactByPhone(call.number);
+      if (!contact) return;
+      if (!Array.isArray(contact.interactions)) return;
+
+      const isLogged = contact.interactions.some(i => {
+        if (i.callLogDate && i.callLogDate === call.date) return true;
+        const iDate = new Date(i.date).getTime();
+        return Math.abs(iDate - call.date) < 180000;
+      });
+      if (!isLogged) unloggedCount++;
+    });
+
+    const headerBadge = document.getElementById('headerCallLogsBadge');
+    if (headerBadge) {
+      headerBadge.textContent = unloggedCount;
+      headerBadge.style.display = unloggedCount > 0 ? 'inline-block' : 'none';
+    }
+
+    const mobileBadge = document.getElementById('mobileCallLogsBadge');
+    if (mobileBadge) {
+      mobileBadge.textContent = unloggedCount;
+      mobileBadge.style.display = unloggedCount > 0 ? 'inline-block' : 'none';
+    }
+  }
+
+  // ========================================================================
   // EVENT BINDINGS
   // ========================================================================
 
@@ -2135,6 +2777,58 @@ class SocialCircleApp {
     document.getElementById('emptyAddBtn').onclick = () => this.openAddEditContactModal();
     document.getElementById('quickLogBtn').onclick = () => this.openLogInteractionModal();
     document.getElementById('themeToggleBtn').onclick = () => this.toggleTheme();
+
+    // Call Logs & Contact Picker top/mobile bindings
+    const headerCallLogsBtn = document.getElementById('headerCallLogsBtn');
+    if (headerCallLogsBtn) {
+      headerCallLogsBtn.onclick = () => this.openCallLogsModal();
+    }
+
+    const mobileCallLogsBtn = document.getElementById('mobileActionCallLogs');
+    if (mobileCallLogsBtn) {
+      mobileCallLogsBtn.onclick = () => this.openCallLogsModal();
+    }
+
+    const btnPickPhone = document.getElementById('btnPickPhoneContact');
+    if (btnPickPhone) {
+      btnPickPhone.onclick = () => this.pickContactFromPhone();
+    }
+
+    const btnBrowseContacts = document.getElementById('btnBrowsePhoneContacts');
+    if (btnBrowseContacts) {
+      btnBrowseContacts.onclick = () => this.openDeviceContactsModal();
+    }
+
+    const devSearch = document.getElementById('deviceContactsSearch');
+    if (devSearch) {
+      devSearch.oninput = (e) => this.loadDeviceContacts(e.target.value.trim());
+    }
+
+    const btnAutoSync = document.getElementById('btnAutoSyncCallLogs');
+    if (btnAutoSync) {
+      btnAutoSync.onclick = () => this.autoSyncUnloggedCalls();
+    }
+
+    const btnRefreshCalls = document.getElementById('btnRefreshCallLogs');
+    if (btnRefreshCalls) {
+      btnRefreshCalls.onclick = () => {
+        this.renderCallLogs();
+        this.showToast('🔄 Refreshed phone call logs', 'info');
+      };
+    }
+
+    const callLogsFilter = document.getElementById('callLogsFilter');
+    if (callLogsFilter) {
+      callLogsFilter.onchange = (e) => this.renderCallLogs(e.target.value);
+    }
+
+    const btnPickCallForInter = document.getElementById('btnPickFromCallLogsForInteraction');
+    if (btnPickCallForInter) {
+      btnPickCallForInter.onclick = () => {
+        this.closeModal('interactionModal');
+        this.openCallLogsModal();
+      };
+    }
 
     // Desktop Header Calendar Button
     const headerCalBtn = document.getElementById('headerCalendarBtn');

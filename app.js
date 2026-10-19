@@ -8,7 +8,7 @@
 // CONFIGURATION & CONSTANTS
 // ==========================================================================
 
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.0.2';
 
 const LEVEL_DEFINITIONS = [
   { level: 1, title: 'Acquaintance', minXp: 0, maxXp: 99, colorClass: 'lvl-1' },
@@ -300,6 +300,19 @@ class SocialCircleApp {
       document.getElementById('themeIcon').textContent = '🌙';
       localStorage.setItem(THEME_KEY, 'light');
     }
+  }
+
+  formatCadence(days) {
+    const d = parseInt(days, 10);
+    if (d === 1) return 'Daily (Every Day)';
+    if (d === 3) return 'Every 3 Days';
+    if (d === 7) return 'Every 7 Days (Weekly)';
+    if (d === 14) return 'Every 2 Weeks (Bi-weekly)';
+    if (d === 30) return 'Every Month (30 Days)';
+    if (d === 60) return 'Every 2 Months (60 Days)';
+    if (d === 90) return 'Every Quarter (90 Days)';
+    if (d === 180) return 'Twice a Year (180 Days)';
+    return `Every ${d || 14} days`;
   }
 
   // ========================================================================
@@ -1029,7 +1042,7 @@ class SocialCircleApp {
           </div>
 
           <div class="leveler-sub">
-            <span>Rhythm: Every ${m.cadence}d</span>
+            <span>Rhythm: ${m.cadence === 1 ? 'Daily' : (m.cadence === 3 ? 'Every 3d' : 'Every ' + m.cadence + 'd')}</span>
             <div class="reciprocity-pill ${m.themRatio > 40 ? 'rec-they-initiated' : ''}" title="Reciprocity: ${m.themRatio}% initiated by them">
               🔄 ${m.userRatio}% You / ${m.themRatio}% Them
             </div>
@@ -1448,7 +1461,7 @@ class SocialCircleApp {
     // Contact details
     document.getElementById('profPhoneText').textContent = contact.phone || 'No phone set';
     document.getElementById('profEmailText').textContent = contact.email || 'No email set';
-    document.getElementById('profCadenceText').textContent = `Every ${contact.targetCadenceDays || 14} days`;
+    document.getElementById('profCadenceText').textContent = this.formatCadence(contact.targetCadenceDays || 14);
     document.getElementById('profBirthdayText').textContent = contact.birthday || 'None set';
     document.getElementById('profNextTopicsBox').textContent = contact.nextTopicsToAsk || 'No topics noted yet.';
 
@@ -1665,36 +1678,140 @@ class SocialCircleApp {
   // SETTINGS & DATA EXPORT / IMPORT
   // ========================================================================
 
+  handleImportedJsonString(rawJson) {
+    if (!rawJson || typeof rawJson !== 'string') return;
+    try {
+      const parsed = JSON.parse(rawJson.trim());
+      let contactsList = null;
+      if (Array.isArray(parsed)) {
+        contactsList = parsed;
+      } else if (parsed && Array.isArray(parsed.contacts)) {
+        contactsList = parsed.contacts;
+      } else if (parsed && Array.isArray(parsed.data)) {
+        contactsList = parsed.data;
+      }
+      if (!contactsList || !Array.isArray(contactsList)) {
+        throw new Error('No contacts array found in backup file.');
+      }
+
+      contactsList = contactsList.filter(c => c && c.name).map(c => ({
+        id: c.id || Date.now() + Math.floor(Math.random() * 1000),
+        name: c.name,
+        nickname: c.nickname || '',
+        phone: c.phone || '',
+        email: c.email || '',
+        circle: c.circle || 'close',
+        targetCadenceDays: c.targetCadenceDays || 14,
+        currentXp: typeof c.currentXp === 'number' ? c.currentXp : 400,
+        manualLevelOverride: c.manualLevelOverride || null,
+        birthday: c.birthday || '',
+        nextTopicsToAsk: c.nextTopicsToAsk || '',
+        notes: c.notes || '',
+        interactions: Array.isArray(c.interactions) ? c.interactions : [],
+        promisedCall: c.promisedCall || null
+      }));
+
+      if (this.contacts.length > 0) {
+        let added = 0;
+        let updated = 0;
+        for (const incoming of contactsList) {
+          const byId = this.contacts.find(c => String(c.id) === String(incoming.id));
+          const byName = this.contacts.find(c => c.name.toLowerCase().trim() === incoming.name.toLowerCase().trim());
+          const match = byId || byName;
+          if (match) {
+            Object.assign(match, incoming);
+            updated++;
+          } else {
+            this.contacts.push(incoming);
+            added++;
+          }
+        }
+        this.saveContacts();
+        this.render();
+        this.showToast(`🎉 Restored: ${added} new friends, ${updated} updated!`, 'success');
+      } else {
+        this.contacts = contactsList;
+        this.saveContacts();
+        this.render();
+        this.showToast(`🎉 Restored ${contactsList.length} friends!`, 'success');
+      }
+
+      this.closeModal('dataSettingsModal');
+      const syncModal = document.getElementById('googleSyncModal');
+      if (syncModal) syncModal.style.display = 'none';
+      this.playChime('success');
+
+      if (this.googleSync && typeof this.googleSync.scheduleAutoSync === 'function') {
+        this.googleSync.scheduleAutoSync();
+      }
+    } catch (err) {
+      console.error('Import parse error:', err);
+      this.showToast('Import failed: invalid Orbit JSON backup file.', 'error');
+    }
+  }
+
   exportData() {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(this.contacts, null, 2));
+    const backupPayload = {
+      app: 'Orbit Social Circle Tracker',
+      version: APP_VERSION,
+      exportedAt: new Date().toISOString(),
+      contactsCount: this.contacts.length,
+      contacts: this.contacts
+    };
+    const jsonString = JSON.stringify(backupPayload, null, 2);
+    const filename = `orbit_social_circle_${new Date().toISOString().slice(0, 10)}.json`;
+
+    // 1. Android Native App Bridge
+    if (window.AndroidBridge && typeof window.AndroidBridge.exportBackupFile === 'function') {
+      window.AndroidBridge.exportBackupFile(jsonString, filename);
+      this.showToast('Select Google Drive or Files in the share sheet to save!', 'info');
+      return;
+    }
+
+    // 2. Modern Web File System API
+    if (window.showSaveFilePicker) {
+      window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{
+          description: 'Orbit JSON Backup File',
+          accept: { 'application/json': ['.json'] }
+        }]
+      }).then(async (handle) => {
+        const writable = await handle.createWritable();
+        await writable.write(jsonString);
+        await writable.close();
+        this.showToast('Data exported successfully!', 'success');
+        this.playChime('success');
+      }).catch(err => {
+        if (err.name !== 'AbortError') {
+          this.fallbackDownloadData(jsonString, filename);
+        }
+      });
+      return;
+    }
+
+    // 3. Fallback standard anchor download
+    this.fallbackDownloadData(jsonString, filename);
+  }
+
+  fallbackDownloadData(jsonString, filename) {
+    const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
     const dlAnchor = document.createElement('a');
-    dlAnchor.setAttribute('href', dataStr);
-    dlAnchor.setAttribute('download', `orbit_social_circle_${new Date().toISOString().slice(0, 10)}.json`);
+    dlAnchor.setAttribute('href', url);
+    dlAnchor.setAttribute('download', filename);
     document.body.appendChild(dlAnchor);
     dlAnchor.click();
     dlAnchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
     this.showToast('Data exported successfully!', 'success');
   }
 
   importData(file) {
+    if (!file) return;
     const reader = new FileReader();
     reader.onload = (e) => {
-      try {
-        const imported = JSON.parse(e.target.result);
-        if (Array.isArray(imported)) {
-          this.contacts = imported;
-          this.saveContacts();
-          this.render();
-          this.closeModal('dataSettingsModal');
-          this.showToast(`Imported ${imported.length} contacts!`, 'success');
-          this.playChime('success');
-        } else {
-          throw new Error('Invalid format: root must be an array of contacts.');
-        }
-      } catch (err) {
-        console.error('Import failed:', err);
-        this.showToast('Import failed. Invalid JSON structure.', 'error');
-      }
+      this.handleImportedJsonString(e.target.result);
     };
     reader.readAsText(file);
   }
@@ -2994,10 +3111,25 @@ class SocialCircleApp {
 
     document.getElementById('exportDataBtn').onclick = () => this.exportData();
     const importInput = document.getElementById('importFileInput');
-    document.getElementById('importDataBtn').onclick = () => importInput.click();
+    document.getElementById('importDataBtn').onclick = () => {
+      if (window.AndroidBridge && typeof window.AndroidBridge.restoreBackupFile === 'function') {
+        window.AndroidBridge.restoreBackupFile();
+      } else {
+        importInput.click();
+      }
+    };
     importInput.onchange = (e) => {
       if (e.target.files && e.target.files[0]) {
         this.importData(e.target.files[0]);
+      }
+    };
+
+    window.onNativeDataRestored = () => {
+      const json = window.AndroidBridge && typeof window.AndroidBridge.getPendingRestoreJson === 'function'
+        ? window.AndroidBridge.getPendingRestoreJson()
+        : '';
+      if (json) {
+        this.handleImportedJsonString(json);
       }
     };
     const enableSoundBtn = document.getElementById('enableSoundBtn');
@@ -3263,6 +3395,33 @@ class SocialCircleApp {
         if (e.target.files && e.target.files[0]) {
           this.googleSync.restoreGoogleDriveBackup(e.target.files[0]);
           e.target.value = '';
+        }
+      };
+    }
+
+    const btnPairSyncKey = document.getElementById('btnPairSyncKey');
+    const inputPairSyncKey = document.getElementById('inputPairSyncKey');
+    if (btnPairSyncKey && inputPairSyncKey) {
+      btnPairSyncKey.onclick = () => {
+        const key = inputPairSyncKey.value.trim();
+        if (key) {
+          this.googleSync.pairSyncKey(key);
+        } else {
+          this.showToast('Please enter a Sync Key to pair.', 'warning');
+        }
+      };
+    }
+
+    const btnCopySyncKey = document.getElementById('btnCopySyncKey');
+    if (btnCopySyncKey) {
+      btnCopySyncKey.onclick = () => {
+        const key = this.googleSync.syncChannelId;
+        if (key) {
+          navigator.clipboard.writeText(key).then(() => {
+            this.showToast('📋 Copied Sync Key to clipboard!', 'info');
+          }).catch(() => {
+            this.showToast(`Sync Key: ${key}`, 'info');
+          });
         }
       };
     }

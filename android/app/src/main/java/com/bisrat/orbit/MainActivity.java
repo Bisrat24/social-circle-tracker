@@ -18,6 +18,7 @@ import android.provider.CalendarContract;
 import android.provider.ContactsContract;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -33,7 +34,10 @@ public class MainActivity extends Activity {
     private static final int REQ_PERM_ALL = 204;
     private static final int REQ_CREATE_DRIVE_BACKUP = 205;
     private static final int REQ_OPEN_DRIVE_BACKUP = 206;
+    private static final int REQ_FILE_CHOOSER = 301;
     private String pendingBackupJson = null;
+    private String pendingRestoredJson = null;
+    private ValueCallback<Uri[]> mFilePathCallback = null;
 
     public class AndroidBridge {
         @JavascriptInterface
@@ -381,18 +385,34 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void exportToGoogleDrive(final String jsonData, final String filename) {
+        public void exportBackupFile(final String jsonData, final String filename) {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
                     try {
+                        final String fname = (filename != null && !filename.trim().isEmpty()) ? filename.trim() : "orbit_social_backup.json";
                         pendingBackupJson = jsonData;
-                        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-                        intent.addCategory(Intent.CATEGORY_OPENABLE);
-                        intent.setType("application/json");
-                        String fname = (filename != null && !filename.trim().isEmpty()) ? filename.trim() : "orbit_backup.json";
-                        intent.putExtra(Intent.EXTRA_TITLE, fname);
-                        startActivityForResult(intent, REQ_CREATE_DRIVE_BACKUP);
+
+                        java.io.File cacheFile = new java.io.File(getCacheDir(), fname);
+                        java.io.FileOutputStream fos = new java.io.FileOutputStream(cacheFile);
+                        fos.write(jsonData.getBytes("UTF-8"));
+                        fos.flush();
+                        fos.close();
+
+                        Intent shareIntent = new Intent(Intent.ACTION_SEND);
+                        shareIntent.setType("application/json");
+                        shareIntent.putExtra(Intent.EXTRA_SUBJECT, "Orbit Backup: " + fname);
+                        shareIntent.putExtra(Intent.EXTRA_TEXT, jsonData);
+                        shareIntent.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(cacheFile));
+                        shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+                        Intent chooser = Intent.createChooser(shareIntent, "Save Backup to Google Drive / Files");
+                        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(chooser);
+
+                        if (webView != null) {
+                            webView.evaluateJavascript("if(window.onNativeGoogleDriveSaved)window.onNativeGoogleDriveSaved(true);", null);
+                        }
                     } catch (Exception e) {
                         try {
                             Intent sendIntent = new Intent(Intent.ACTION_SEND);
@@ -404,6 +424,16 @@ public class MainActivity extends Activity {
                     }
                 }
             });
+        }
+
+        @JavascriptInterface
+        public void exportToGoogleDrive(final String jsonData, final String filename) {
+            exportBackupFile(jsonData, filename);
+        }
+
+        @JavascriptInterface
+        public void restoreBackupFile() {
+            restoreFromGoogleDrive();
         }
 
         @JavascriptInterface
@@ -430,6 +460,13 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String getPendingRestoreJson() {
+            String res = pendingRestoredJson;
+            pendingRestoredJson = null;
+            return res != null ? res : "";
+        }
+
+        @JavascriptInterface
         public boolean isNative() {
             return true;
         }
@@ -443,6 +480,13 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 21) {
             getWindow().setStatusBarColor(0xFF0B0E17);
             getWindow().setNavigationBarColor(0xFF0B0E17);
+        }
+
+        if (Build.VERSION.SDK_INT >= 24) {
+            try {
+                android.os.StrictMode.VmPolicy.Builder builder = new android.os.StrictMode.VmPolicy.Builder();
+                android.os.StrictMode.setVmPolicy(builder.build());
+            } catch (Exception ignored) {}
         }
 
         // Request permissions on startup
@@ -506,6 +550,37 @@ public class MainActivity extends Activity {
                         }
                     }
                 });
+            }
+
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, WebChromeClient.FileChooserParams fileChooserParams) {
+                if (mFilePathCallback != null) {
+                    mFilePathCallback.onReceiveValue(null);
+                    mFilePathCallback = null;
+                }
+                mFilePathCallback = filePathCallback;
+
+                Intent intent = null;
+                if (fileChooserParams != null && Build.VERSION.SDK_INT >= 21) {
+                    try {
+                        intent = fileChooserParams.createIntent();
+                    } catch (Exception ignored) {}
+                }
+                if (intent == null) {
+                    intent = new Intent(Intent.ACTION_GET_CONTENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("*/*");
+                }
+                try {
+                    startActivityForResult(Intent.createChooser(intent, "Select Orbit Backup File"), REQ_FILE_CHOOSER);
+                    return true;
+                } catch (Exception e) {
+                    if (mFilePathCallback != null) {
+                        mFilePathCallback.onReceiveValue(null);
+                        mFilePathCallback = null;
+                    }
+                    return false;
+                }
             }
         });
 
@@ -603,7 +678,24 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_PICK_CONTACT && resultCode == RESULT_OK && data != null) {
+        if (requestCode == REQ_FILE_CHOOSER) {
+            if (mFilePathCallback != null) {
+                Uri[] results = null;
+                if (resultCode == RESULT_OK && data != null) {
+                    if (data.getClipData() != null) {
+                        int count = data.getClipData().getItemCount();
+                        results = new Uri[count];
+                        for (int i = 0; i < count; i++) {
+                            results[i] = data.getClipData().getItemAt(i).getUri();
+                        }
+                    } else if (data.getData() != null) {
+                        results = new Uri[]{ data.getData() };
+                    }
+                }
+                mFilePathCallback.onReceiveValue(results);
+                mFilePathCallback = null;
+            }
+        } else if (requestCode == REQ_PICK_CONTACT && resultCode == RESULT_OK && data != null) {
             Uri contactUri = data.getData();
             if (contactUri != null) {
                 Cursor cursor = null;
@@ -671,12 +763,13 @@ public class MainActivity extends Activity {
                             sb.append(line).append("\n");
                         }
                         reader.close();
-                        final String jsonContent = sb.toString();
+                        pendingRestoredJson = sb.toString();
+                        final String jsonContent = pendingRestoredJson;
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
                                 if (webView != null) {
-                                    webView.evaluateJavascript("if(window.onNativeGoogleDriveRestore)window.onNativeGoogleDriveRestore(" + escapeJson(jsonContent) + ");", null);
+                                    webView.evaluateJavascript("if(window.onNativeDataRestored) { window.onNativeDataRestored(); } else if(window.onNativeGoogleDriveRestore) { window.onNativeGoogleDriveRestore(" + escapeJson(jsonContent) + "); }", null);
                                 }
                             }
                         });

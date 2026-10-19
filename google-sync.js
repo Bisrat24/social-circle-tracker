@@ -23,6 +23,7 @@ class GoogleSyncEngine {
     this.tokenClient = null;
     this.syncDebounceTimer = null;
     this.driveFileId = null;
+    this.syncChannelId = null;
     this.isLocalSyncActive = false;
     this.serverInfo = null;
     this.syncMode = 'none'; // 'google_oauth' | 'wifi' | 'email_linked'
@@ -39,6 +40,7 @@ class GoogleSyncEngine {
         this.userProfile = parsed.userProfile || null;
         this.lastSyncTime = parsed.lastSyncTime ? new Date(parsed.lastSyncTime) : null;
         this.driveFileId = parsed.driveFileId || null;
+        this.syncChannelId = parsed.syncChannelId || null;
         this.syncMode = parsed.syncMode || 'none';
       }
     } catch (e) {
@@ -53,6 +55,7 @@ class GoogleSyncEngine {
         userProfile: this.userProfile,
         lastSyncTime: this.lastSyncTime ? this.lastSyncTime.toISOString() : null,
         driveFileId: this.driveFileId,
+        syncChannelId: this.syncChannelId,
         syncMode: this.syncMode
       }));
     } catch (e) {
@@ -76,25 +79,12 @@ class GoogleSyncEngine {
     };
 
     window.onNativeGoogleDriveRestore = (jsonString) => {
-      if (!jsonString) return;
-      try {
-        const parsed = JSON.parse(jsonString);
-        const contactsToImport = Array.isArray(parsed) ? parsed : (parsed.contacts && Array.isArray(parsed.contacts) ? parsed.contacts : null);
-        if (!contactsToImport) {
-          throw new Error('Invalid format');
-        }
-        const merged = this.mergeContacts(this.app.contacts, contactsToImport);
-        this.app.contacts = merged;
-        this.app.saveContacts();
-        this.app.render();
-        this.app.showToast(`🎉 Restored ${contactsToImport.length} contacts from Google Drive!`, 'success');
-        this.app.playChime('success');
-        const modal = document.getElementById('googleSyncModal');
-        if (modal) modal.style.display = 'none';
-      } catch (e) {
-        console.error('Failed to parse Drive backup:', e);
-        this.app.showToast('Could not parse Google Drive backup file.', 'error');
+      let raw = jsonString;
+      if (!raw && window.AndroidBridge && typeof window.AndroidBridge.getPendingRestoreJson === 'function') {
+        raw = window.AndroidBridge.getPendingRestoreJson();
       }
+      if (!raw) return;
+      this.app.handleImportedJsonString(raw);
     };
 
     // 4. Initialize Google Identity Services if available and on HTTP
@@ -247,6 +237,14 @@ class GoogleSyncEngine {
     };
     this.syncMode = 'email_linked';
     this.lastSyncTime = new Date();
+
+    // 1. Check or initialize Cloud Sync channel
+    if (!this.syncChannelId) {
+      await this.initCloudSyncChannel(cleanEmail);
+    } else {
+      await this.performTwoWaySync();
+    }
+
     this.saveConfig();
 
     // Push state to local server if active
@@ -254,10 +252,89 @@ class GoogleSyncEngine {
       await this.pushToLocalSyncServer();
     }
 
+    this.updateSyncUI();
     this.setSyncStatus('synced', `${userName} (Synced)`);
-    this.app.showToast(`✅ Linked to Google Account: ${cleanEmail}! Circle synced.`, 'success');
+    this.app.showToast(`✅ Linked to Google Account: ${cleanEmail}! Circle synced to Cloud.`, 'success');
     this.app.playChime('success');
     this.openConfigModal();
+  }
+
+  async initCloudSyncChannel(email) {
+    try {
+      this.setSyncStatus('syncing', 'Connecting Cloud...');
+      const payload = {
+        name: `Orbit_${email.replace(/[^a-zA-Z0-9]/g, '_')}`,
+        data: {
+          email: email,
+          lastUpdated: new Date().toISOString(),
+          contactsCount: this.app.contacts.length,
+          contacts: this.app.contacts
+        }
+      };
+
+      const res = await fetch('https://api.restful-api.dev/objects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.id) {
+          this.syncChannelId = data.id;
+          this.saveConfig();
+          this.updateSyncUI();
+          return this.syncChannelId;
+        }
+      }
+    } catch (err) {
+      console.warn('Cloud sync channel init note:', err);
+    }
+    return null;
+  }
+
+  async pairSyncKey(syncKey) {
+    if (!syncKey || syncKey.trim().length < 8) {
+      this.app.showToast('Please enter a valid Sync Key.', 'error');
+      return;
+    }
+    const cleanKey = syncKey.trim();
+    this.setSyncStatus('syncing', 'Pairing...');
+    try {
+      const res = await fetch(`https://api.restful-api.dev/objects/${cleanKey}`);
+      if (res.ok) {
+        const remoteObj = await res.json();
+        if (remoteObj && remoteObj.data && Array.isArray(remoteObj.data.contacts)) {
+          this.syncChannelId = cleanKey;
+          if (remoteObj.data.email && !this.userProfile) {
+            const cleanEmail = remoteObj.data.email;
+            this.userProfile = {
+              name: cleanEmail.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+              email: cleanEmail,
+              picture: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(cleanEmail)}`
+            };
+          }
+          const merged = this.mergeContacts(this.app.contacts, remoteObj.data.contacts);
+          this.app.contacts = merged;
+          this.app.saveContacts();
+          this.app.render();
+          this.syncMode = 'email_linked';
+          this.lastSyncTime = new Date();
+          this.saveConfig();
+          this.updateSyncUI();
+          this.setSyncStatus('synced', this.userProfile ? `${this.userProfile.name} (Synced)` : 'Cloud Synced');
+          this.app.showToast(`🎉 Paired successfully! Synced ${merged.length} contacts!`, 'success');
+          this.app.playChime('success');
+          return;
+        }
+      }
+      this.app.showToast('Could not find cloud sync channel for this key.', 'error');
+      this.setSyncStatus('error', 'Key Not Found');
+    } catch (err) {
+      console.error('Pair sync error:', err);
+      this.app.showToast('Network error while pairing. Check your connection.', 'error');
+      this.setSyncStatus('error', 'Connection Error');
+    }
   }
 
   // ========================================================================
@@ -269,7 +346,43 @@ class GoogleSyncEngine {
 
     let syncedChannels = [];
 
-    // 1. Sync with Local PC Server (/api/sync)
+    // 1. Cloud Sync Channel (Cross-Device REST KV)
+    if (this.syncChannelId) {
+      try {
+        const res = await fetch(`https://api.restful-api.dev/objects/${this.syncChannelId}`);
+        if (res.ok) {
+          const remoteObj = await res.json();
+          if (remoteObj && remoteObj.data && Array.isArray(remoteObj.data.contacts)) {
+            const merged = this.mergeContacts(this.app.contacts, remoteObj.data.contacts);
+            this.app.contacts = merged;
+            this.app.saveContacts();
+            this.app.render();
+
+            await fetch(`https://api.restful-api.dev/objects/${this.syncChannelId}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: remoteObj.name || 'OrbitSync',
+                data: {
+                  email: this.userProfile ? this.userProfile.email : 'local',
+                  lastUpdated: new Date().toISOString(),
+                  contactsCount: merged.length,
+                  contacts: merged
+                }
+              })
+            });
+            syncedChannels.push('Cloud Sync');
+          }
+        }
+      } catch (err) {
+        console.warn('Cloud sync error:', err);
+      }
+    } else if (this.userProfile && this.userProfile.email) {
+      const newId = await this.initCloudSyncChannel(this.userProfile.email);
+      if (newId) syncedChannels.push('Cloud Sync');
+    }
+
+    // 2. Sync with Local PC Server (/api/sync)
     if (this.isLocalSyncActive) {
       try {
         await this.pushToLocalSyncServer();
@@ -289,7 +402,7 @@ class GoogleSyncEngine {
       }
     }
 
-    // 2. Sync with Google Drive AppData (OAuth 2.0)
+    // 3. Sync with Google Drive AppData (OAuth 2.0)
     if (this.accessToken && Date.now() < this.tokenExpiresAt) {
       try {
         const file = await this.findSyncFile();
@@ -325,6 +438,7 @@ class GoogleSyncEngine {
 
     this.lastSyncTime = new Date();
     this.saveConfig();
+    this.updateSyncUI();
 
     if (syncedChannels.length > 0) {
       const label = this.userProfile ? `${this.userProfile.name} (Synced)` : 'Synced';
@@ -377,13 +491,28 @@ class GoogleSyncEngine {
   scheduleAutoSync() {
     clearTimeout(this.syncDebounceTimer);
     this.syncDebounceTimer = setTimeout(() => {
+      if (this.syncChannelId) {
+        fetch(`https://api.restful-api.dev/objects/${this.syncChannelId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: `Orbit_${(this.userProfile ? this.userProfile.email : 'sync').replace(/[^a-zA-Z0-9]/g, '_')}`,
+            data: {
+              email: this.userProfile ? this.userProfile.email : 'local',
+              lastUpdated: new Date().toISOString(),
+              contactsCount: this.app.contacts.length,
+              contacts: this.app.contacts
+            }
+          })
+        }).catch(() => {});
+      }
       if (this.isLocalSyncActive) {
         this.pushToLocalSyncServer();
       }
       if (this.accessToken) {
         this.performTwoWaySync();
       }
-    }, 1500);
+    }, 2000);
   }
 
   // ========================================================================
@@ -393,7 +522,7 @@ class GoogleSyncEngine {
   exportDirectGoogleDrive() {
     const backupPayload = {
       app: 'Orbit Social Circle Tracker',
-      version: '1.0.1',
+      version: '1.0.2',
       exportedAt: new Date().toISOString(),
       account: this.userProfile ? this.userProfile.email : 'local',
       contactsCount: this.app.contacts.length,
@@ -688,6 +817,17 @@ class GoogleSyncEngine {
         mobileSyncBtn.classList.remove('nav-syncing');
       }
     }
+
+    const syncChannelBox = document.getElementById('syncChannelDetailsBox');
+    const syncKeyDisplay = document.getElementById('displaySyncChannelKey');
+    if (syncChannelBox && syncKeyDisplay) {
+      if (this.syncChannelId) {
+        syncChannelBox.style.display = 'block';
+        syncKeyDisplay.textContent = this.syncChannelId;
+      } else {
+        syncChannelBox.style.display = 'none';
+      }
+    }
   }
 
   getRelativeTime(date) {
@@ -712,6 +852,17 @@ class GoogleSyncEngine {
     const emailInput = document.getElementById('googleAccountEmailInput');
     if (emailInput && this.userProfile) {
       emailInput.value = this.userProfile.email || '';
+    }
+
+    const syncChannelBox = document.getElementById('syncChannelDetailsBox');
+    const syncKeyDisplay = document.getElementById('displaySyncChannelKey');
+    if (syncChannelBox && syncKeyDisplay) {
+      if (this.syncChannelId) {
+        syncChannelBox.style.display = 'block';
+        syncKeyDisplay.textContent = this.syncChannelId;
+      } else {
+        syncChannelBox.style.display = 'none';
+      }
     }
 
     const profileCard = document.getElementById('googleAccountProfileCard');

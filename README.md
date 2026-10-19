@@ -24,15 +24,15 @@ We all experience this:
 
 ## 📱 Android Version & How to Install
 
-### 🌐 Live Cloud Web App & Direct APK Download (Version 1.0.1)
+### 🌐 Live Cloud Web App & Direct APK Download (Version 1.0.2)
 
 | Platform | Link | Description |
 |---|---|---|
-| **Live Cloud Web App** | [https://apricot-broker-vsv48.ship.place/](https://apricot-broker-vsv48.ship.place/) | 24/7 HTTPS cloud deployment with instant mobile & desktop access |
-| **Direct APK Download** | [https://apricot-broker-vsv48.ship.place/Orbit.apk](https://apricot-broker-vsv48.ship.place/Orbit.apk) | Native signed Android APK (0.17 MB, v1+v2+v3 signatures, offline-capable) |
+| **Live Cloud Web App** | [https://garnet-calf-dpyfb.ship.place/](https://garnet-calf-dpyfb.ship.place/) | 24/7 HTTPS cloud deployment with instant mobile & desktop access |
+| **Direct APK Download** | [https://garnet-calf-dpyfb.ship.place/Orbit.apk](https://garnet-calf-dpyfb.ship.place/Orbit.apk) | Native signed Android APK (0.18 MB, v1+v2+v3 signatures, offline-capable) |
 
 #### How to install it on your Android phone:
-1. Tap the **[Download Orbit.apk](https://apricot-broker-vsv48.ship.place/Orbit.apk)** link on your phone.
+1. Tap the **[Download Orbit.apk](https://garnet-calf-dpyfb.ship.place/Orbit.apk)** link on your phone.
 2. Tap the downloaded file to install/update the app.
 3. Grant **Contacts** and **Call Logs** permissions when prompted to enable 1-tap friend adding and call history auto-sync.
 4. Enjoy easy relationship management!
@@ -41,13 +41,14 @@ We all experience this:
 
 ## ☁️ Google Account & Cross-Device Sync
 
-Orbit offers 3 flexible ways to keep your social circle in sync between PC and Android:
+Orbit offers flexible ways to keep your social circle in sync between PC and Android:
 
-### Method 1: Instant Google Account Link & 1-Click Drive Backup (Zero Setup)
+### Method 1: Instant Google Account & Cloud Sync (Zero Setup)
 - Click **"Sync with Google"** in the top header.
-- Enter your **Google Email address** and click **"⚡ Connect Google Account"** — Orbit links your profile, personalizes your avatar, and activates cloud-ready mode immediately!
-- Click **"💾 Save Backup to Google Drive"** anytime: Orbit packages your latest contacts, levels, and notes, downloads the backup file, and opens your Google Drive in a new tab so you can save it to the cloud.
-- Click **"📥 Restore from Google Drive"** on any device to instantly load your backup!
+- Enter your **Google Email address** and click **"⚡ Connect Account"** — Orbit links your profile, personalizes your avatar, and activates cloud-ready sync automatically!
+- **Pairing Key**: Copy your 32-character Sync Key and paste it into Orbit on any other device (or tap **"Pair & Sync"**) to immediately share and keep your contacts synchronized.
+- Click **"💾 Save Backup to Google Drive"**: Orbit launches the native Android Share sheet with Google Drive pre-configured to upload your backup directly, or downloads the file on web.
+- Click **"📥 Restore from Google Drive"**: Select any backup file directly from your Google Drive or local storage to restore all your friends, levels, and notes!
 
 ### Method 2: Real-Time PC ⇄ Android Local Wi-Fi Sync
 - Double-click **`launch.bat`** (or **`host-mobile.bat`**) on your PC.

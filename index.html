@@ -35,7 +35,7 @@
           <span class="logo-core">🪐</span>
         </div>
         <div class="brand-text">
-          <h1>Orbit <span class="app-version-badge" style="font-size: 0.65rem; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: rgba(99, 102, 241, 0.18); color: var(--accent-purple); border: 1px solid rgba(99, 102, 241, 0.35); vertical-align: middle; margin-left: 4px;">v1.0.1</span></h1>
+          <h1>Orbit <span class="app-version-badge" style="font-size: 0.65rem; font-weight: 700; padding: 2px 7px; border-radius: 999px; background: rgba(99, 102, 241, 0.18); color: var(--accent-purple); border: 1px solid rgba(99, 102, 241, 0.35); vertical-align: middle; margin-left: 4px;">v1.0.2</span></h1>
           <p class="tagline">Stay connected with the people who matter</p>
         </div>
       </div>
@@ -333,6 +333,8 @@
           <div class="form-group flex-1">
             <label for="formCadence">Desired Contact Rhythm</label>
             <select id="formCadence">
+              <option value="1">Daily (Every Day)</option>
+              <option value="3">Every 3 Days</option>
               <option value="7">Every 7 Days (Weekly)</option>
               <option value="14" selected>Every 2 Weeks (Bi-weekly)</option>
               <option value="30">Every Month (30 Days)</option>
@@ -763,11 +765,11 @@
           </div>
         </div>
 
-        <!-- SYNC METHOD 1: INSTANT GOOGLE ACCOUNT LINK (ZERO SETUP) -->
+        <!-- SYNC METHOD 1: INSTANT GOOGLE ACCOUNT & CLOUD SYNC (ZERO SETUP) -->
         <div id="googleLinkSection" class="sync-config-section">
           <div class="section-badge-tag">Method 1 (Instant — Zero Setup)</div>
-          <h4>Link Your Google Account</h4>
-          <p class="text-sm">Link your Google email to activate seamless cross-device identity and cloud backup:</p>
+          <h4>Link Google Account & Cloud Sync</h4>
+          <p class="text-sm">Link your Google email to activate seamless cross-device cloud sync and backup across PC and phone:</p>
           
           <div class="form-row mt-2">
             <div class="form-group flex-2">
@@ -775,7 +777,25 @@
               <input type="email" id="googleAccountEmailInput" placeholder="e.g. yourname@gmail.com">
             </div>
             <div class="form-group flex-1" style="justify-content: flex-end;">
-              <button id="btnLinkGoogleEmail" class="btn btn-primary w-full">⚡ Connect Google Account</button>
+              <button id="btnLinkGoogleEmail" class="btn btn-primary w-full">⚡ Connect Account</button>
+            </div>
+          </div>
+
+          <div id="syncChannelDetailsBox" class="mt-2" style="display: none; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 10px;">
+            <div style="font-size: 0.85rem; color: #34d399; font-weight: 600;">☁️ Cloud Sync Active</div>
+            <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 3px;">
+              Sync Key: <code id="displaySyncChannelKey" style="color: #6ee7b7; user-select: all;"></code>
+              <button id="btnCopySyncKey" class="btn btn-xs btn-ghost" style="margin-left: 6px; padding: 2px 6px;">📋 Copy</button>
+            </div>
+          </div>
+
+          <div class="form-row mt-2" id="syncKeyConnectRow">
+            <div class="form-group flex-2">
+              <label for="inputPairSyncKey" style="font-size: 0.78rem;">Or Pair with Sync Key from another device</label>
+              <input type="text" id="inputPairSyncKey" placeholder="Paste 32-character Sync Key">
+            </div>
+            <div class="form-group flex-1" style="justify-content: flex-end;">
+              <button id="btnPairSyncKey" class="btn btn-secondary w-full" style="font-size: 0.82rem;">🔗 Pair & Sync</button>
             </div>
           </div>
         </div>
@@ -813,10 +833,10 @@
           <div class="wifi-sync-details mt-2">
             <div class="wifi-ip-badge highlight-badge" style="background: rgba(99, 102, 241, 0.15); border: 1px solid rgba(99, 102, 241, 0.4); padding: 12px; border-radius: 10px;">
               <div style="font-weight: 700; color: #a5b4fc; margin-bottom: 6px;">🚀 Live Cloud Web App:</div>
-              <code id="activeCloudAppUrl" style="font-size: 1.05rem; color: #38bdf8; word-break: break-all;">https://brazen-lint-meyv3.ship.place/</code>
+              <code id="activeCloudAppUrl" style="font-size: 1.05rem; color: #38bdf8; word-break: break-all;">https://garnet-calf-dpyfb.ship.place/</code>
               <div class="mt-2" style="display: flex; gap: 8px; flex-wrap: wrap;">
-                <a href="https://brazen-lint-meyv3.ship.place/" target="_blank" class="btn btn-xs btn-primary" style="text-decoration:none;">🌐 Open Cloud App</a>
-                <a href="https://brazen-lint-meyv3.ship.place/Orbit.apk" download class="btn btn-xs btn-secondary" style="text-decoration:none;">📱 Download Orbit.apk</a>
+                <a href="https://garnet-calf-dpyfb.ship.place/" id="linkOpenCloudApp" target="_blank" class="btn btn-xs btn-primary" style="text-decoration:none;">🌐 Open Cloud App</a>
+                <a href="https://garnet-calf-dpyfb.ship.place/Orbit.apk" id="linkDownloadApk" download class="btn btn-xs btn-secondary" style="text-decoration:none;">📱 Download Orbit.apk</a>
               </div>
             </div>
           </div>

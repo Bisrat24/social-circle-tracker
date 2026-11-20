@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <TextView
+        android:id="@+id/notif_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="🪐 ORBIT REMINDERS"
+        android:textColor="#F3F6FC"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/notif_line1"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:textColor="#F3F6FC"
+        android:textSize="13sp" />
+    <TextView
+        android:id="@+id/notif_line2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#C7D2E5"
+        android:textSize="12sp" />
+    <TextView
+        android:id="@+id/notif_line3"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#C7D2E5"
+        android:textSize="12sp" />
+
+    <TextView
+        android:id="@+id/notif_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="No pending callbacks — you're all caught up ✨"
+        android:textColor="#16B981"
+        android:textSize="12sp" />
+</LinearLayout>

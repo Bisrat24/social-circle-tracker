@@ -11,6 +11,32 @@ $r8 = Join-Path $buildDir "r8-java8.jar"
 $signerJar = Join-Path $baseDir "uber-apk-signer.jar"
 $finalApk = Join-Path $baseDir "Orbit.apk"
 
+# The tracked android/ project is the source of truth; copy native sources into the
+# gitignored build staging folder so a fresh checkout can rebuild without manual steps.
+$studio = Join-Path $baseDir "android\app\src\main"
+$projectDir = Join-Path $baseDir "android_build\project"
+Copy-Item (Join-Path $studio "AndroidManifest.xml") (Join-Path $projectDir "AndroidManifest.xml") -Force
+foreach ($java in @("MainActivity.java", "ReminderWidgetProvider.java", "OrbitReminderService.java", "BootReceiver.java")) {
+    Copy-Item (Join-Path $studio "java\com\bisrat\orbit\$java") (Join-Path $projectDir "src\com\bisrat\orbit\$java") -Force
+}
+foreach ($res in @("res\layout\reminder_widget.xml", "res\xml\reminder_widget_info.xml",
+                   "res\layout\notification_reminder.xml", "res\drawable\ic_stat_orbit.png",
+                   "res\mipmap-hdpi\ic_launcher.png", "res\mipmap-xhdpi\ic_launcher.png",
+                   "res\mipmap-xxhdpi\ic_launcher.png", "res\mipmap-xxxhdpi\ic_launcher.png")) {
+    $target = Join-Path $projectDir $res
+    $dir = Split-Path $target -Parent
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    Copy-Item (Join-Path $studio $res) $target -Force
+}
+
+# Keep the Android Studio asset copies in sync with the root web files.
+$studioAssets = Join-Path $baseDir "android\app\src\main\assets"
+if (Test-Path $studioAssets) {
+    foreach ($name in @("index.html", "styles.css", "app.js", "google-sync.js", "manifest.json", "service-worker.js")) {
+        Copy-Item (Join-Path $baseDir $name) (Join-Path $studioAssets $name) -Force
+    }
+}
+
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   Compiling Pure Native Orbit.apk        " -ForegroundColor Yellow
 Write-Host "==========================================" -ForegroundColor Cyan
@@ -35,9 +61,8 @@ $binDir = Join-Path $projDir "bin"
 if (Test-Path $binDir) { Remove-Item $binDir -Recurse -Force }
 New-Item -ItemType Directory -Path $binDir -Force | Out-Null
 
-$mainJava = Join-Path $projDir "src\com\bisrat\orbit\MainActivity.java"
-$rJava = Join-Path $projDir "src\com\bisrat\orbit\R.java"
-& java -jar $ecj -7 -cp $androidJar -d $binDir $mainJava $rJava
+$javaFiles = (Get-ChildItem -Path (Join-Path $projDir "src") -Filter "*.java" -Recurse).FullName
+& java -jar $ecj -7 -cp $androidJar -d $binDir $javaFiles
 if ($LASTEXITCODE -ne 0) { throw "ECJ compilation failed!" }
 
 # 4. D8 Compile DEX

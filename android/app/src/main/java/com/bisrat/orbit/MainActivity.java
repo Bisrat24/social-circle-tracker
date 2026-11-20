@@ -1,17 +1,21 @@
 package com.bisrat.orbit;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.os.Vibrator;
+import android.provider.Settings;
 import android.database.Cursor;
 import android.provider.CallLog;
 import android.provider.CalendarContract;
@@ -37,6 +41,7 @@ public class MainActivity extends Activity {
     private static final int REQ_FILE_CHOOSER = 301;
     private String pendingBackupJson = null;
     private String pendingRestoredJson = null;
+    private String pendingWidgetContactId = null;
     private ValueCallback<Uri[]> mFilePathCallback = null;
 
     public class AndroidBridge {
@@ -208,9 +213,6 @@ public class MainActivity extends Activity {
                             if (checkSelfPermission("android.permission.READ_CALL_LOG") != PackageManager.PERMISSION_GRANTED) {
                                 list.add("android.permission.READ_CALL_LOG");
                             }
-                            if (checkSelfPermission("android.permission.READ_PHONE_STATE") != PackageManager.PERMISSION_GRANTED) {
-                                list.add("android.permission.READ_PHONE_STATE");
-                            }
                             if (!list.isEmpty()) {
                                 requestPermissions(list.toArray(new String[0]), REQ_PERM_CALL_LOG);
                             }
@@ -233,9 +235,6 @@ public class MainActivity extends Activity {
                             }
                             if (checkSelfPermission("android.permission.READ_CALL_LOG") != PackageManager.PERMISSION_GRANTED) {
                                 list.add("android.permission.READ_CALL_LOG");
-                            }
-                            if (checkSelfPermission("android.permission.READ_PHONE_STATE") != PackageManager.PERMISSION_GRANTED) {
-                                list.add("android.permission.READ_PHONE_STATE");
                             }
                             if (!list.isEmpty()) {
                                 requestPermissions(list.toArray(new String[0]), REQ_PERM_ALL);
@@ -516,11 +515,97 @@ public class MainActivity extends Activity {
         public boolean isNative() {
             return true;
         }
+
+        /** Receives the compact "who needs you" list for the home-screen widget. */
+        @JavascriptInterface
+        public void saveWidgetData(final String json) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        SharedPreferences prefs = getSharedPreferences(ReminderWidgetProvider.PREFS, MODE_PRIVATE);
+                        prefs.edit().putString(ReminderWidgetProvider.KEY_DUE, json).apply();
+                        ReminderWidgetProvider.refresh(MainActivity.this);
+                        OrbitReminderService.update(MainActivity.this);
+                    } catch (Exception ignored) {
+                    }
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public boolean isBatteryOptimizationIgnored() {
+            if (Build.VERSION.SDK_INT < 23) return true;
+            try {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public void openBatterySettings() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                        intent.setData(Uri.parse("package:" + getPackageName()));
+                        startActivity(intent);
+                    } catch (Exception e) {
+                        try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
+                        catch (Exception ignored) {}
+                    }
+                }
+            });
+        }
+    }
+
+    private void maybeAskBatteryOptimization() {
+        if (Build.VERSION.SDK_INT < 23) return;
+        final SharedPreferences prefs = getSharedPreferences("orbit_widget", MODE_PRIVATE);
+        if (prefs.getBoolean("battery_prompted", false)) return;
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (pm != null && pm.isIgnoringBatteryOptimizations(getPackageName())) return;
+        prefs.edit().putBoolean("battery_prompted", true).apply();
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("Keep Orbit reminders running")
+                            .setMessage("Orbit uses a small always-on notification to remind you about promised calls. "
+                                    + "Allow it to ignore battery optimization so reminders keep working when the app is in the background.")
+                            .setPositiveButton("Keep running", new android.content.DialogInterface.OnClickListener() {
+                                @Override
+                                public void onClick(android.content.DialogInterface d, int which) {
+                                    try {
+                                        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                                        intent.setData(Uri.parse("package:" + getPackageName()));
+                                        startActivity(intent);
+                                    } catch (Exception ignored) {}
+                                }
+                            })
+                            .setNegativeButton("Not now", null)
+                            .show();
+                } catch (Exception ignored) {}
+            }
+        });
     }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        Intent launchIntent = getIntent();
+        if (launchIntent != null && launchIntent.hasExtra("contactId")) {
+            pendingWidgetContactId = launchIntent.getStringExtra("contactId");
+        }
+
+        // Keep the reminder bar alive across app switches and low-memory kills.
+        OrbitReminderService.update(this);
+        maybeAskBatteryOptimization();
 
         // Prevent edge trimming: set status and navigation bar colors matching Orbit theme
         if (Build.VERSION.SDK_INT >= 21) {
@@ -543,9 +628,6 @@ public class MainActivity extends Activity {
             }
             if (checkSelfPermission("android.permission.READ_CALL_LOG") != PackageManager.PERMISSION_GRANTED) {
                 startupPerms.add("android.permission.READ_CALL_LOG");
-            }
-            if (checkSelfPermission("android.permission.READ_PHONE_STATE") != PackageManager.PERMISSION_GRANTED) {
-                startupPerms.add("android.permission.READ_PHONE_STATE");
             }
             if (Build.VERSION.SDK_INT >= 33) {
                 if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
@@ -572,13 +654,12 @@ public class MainActivity extends Activity {
         s.setDatabaseEnabled(true);
         s.setAllowFileAccess(true);
         s.setAllowContentAccess(true);
-        try {
-            s.setAllowFileAccessFromFileURLs(true);
-            s.setAllowUniversalAccessFromFileURLs(true);
-        } catch (Exception ignored) {}
+        // Local assets only: a file:// page must not read other files or reach arbitrary origins.
+        s.setAllowFileAccessFromFileURLs(false);
+        s.setAllowUniversalAccessFromFileURLs(false);
         s.setLoadWithOverviewMode(false);
         s.setUseWideViewPort(false);
-        s.setRenderPriority(WebSettings.RenderPriority.HIGH);
+
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
 
         webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
@@ -586,14 +667,11 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
+                // Orbit never needs camera/mic in the WebView; do not grant silently.
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        try {
-                            request.grant(request.getResources());
-                        } catch (Exception e) {
-                            try { request.deny(); } catch (Exception ignored) {}
-                        }
+                        try { request.deny(); } catch (Exception ignored) {}
                     }
                 });
             }
@@ -632,6 +710,16 @@ public class MainActivity extends Activity {
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
+            public void onPageFinished(WebView view, String url) {
+                if (pendingWidgetContactId != null) {
+                    final String id = pendingWidgetContactId.replace("\\", "").replace("'", "");
+                    pendingWidgetContactId = null;
+                    view.evaluateJavascript(
+                            "if(window.orbitApp){window.orbitApp.openProfileModal('" + id + "');}", null);
+                }
+            }
+
+            @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 if (request != null && request.getUrl() != null) {
                     return handleExternalUrl(request.getUrl().toString());
@@ -645,7 +733,9 @@ public class MainActivity extends Activity {
             }
 
             private boolean handleExternalUrl(String url) {
-                if (url == null || url.startsWith("file://") || url.contains("ship.place")) {
+                // Keep file:// assets in the WebView; everything else opens in the browser,
+                // so a remote page never runs with the AndroidBridge attached.
+                if (url == null || url.startsWith("file:///android_asset/")) {
                     return false;
                 }
                 try {

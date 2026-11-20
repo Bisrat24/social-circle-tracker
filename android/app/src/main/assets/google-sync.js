@@ -23,9 +23,12 @@ class GoogleSyncEngine {
     this.tokenClient = null;
     this.syncDebounceTimer = null;
     this.driveFileId = null;
+    this.syncChannelId = null;
     this.isLocalSyncActive = false;
     this.serverInfo = null;
     this.syncMode = 'none'; // 'google_oauth' | 'wifi' | 'email_linked'
+    this.startupSyncTimer = null;
+    this.periodicSyncTimer = null;
 
     this.loadConfig();
   }
@@ -39,6 +42,7 @@ class GoogleSyncEngine {
         this.userProfile = parsed.userProfile || null;
         this.lastSyncTime = parsed.lastSyncTime ? new Date(parsed.lastSyncTime) : null;
         this.driveFileId = parsed.driveFileId || null;
+        this.syncChannelId = parsed.syncChannelId || null;
         this.syncMode = parsed.syncMode || 'none';
       }
     } catch (e) {
@@ -53,6 +57,7 @@ class GoogleSyncEngine {
         userProfile: this.userProfile,
         lastSyncTime: this.lastSyncTime ? this.lastSyncTime.toISOString() : null,
         driveFileId: this.driveFileId,
+        syncChannelId: this.syncChannelId,
         syncMode: this.syncMode
       }));
     } catch (e) {
@@ -60,7 +65,54 @@ class GoogleSyncEngine {
     }
   }
 
+  // A cloud channel key is a secret, not an identity claim. Never derive it from email.
+  createSyncKey() {
+    if (window.crypto && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID().replace(/-/g, '');
+    }
+    const bytes = new Uint8Array(16);
+    if (window.crypto && crypto.getRandomValues) {
+      crypto.getRandomValues(bytes);
+      return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+    }
+    return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  }
+
+  loadGoogleIdentityScript(done) {
+    if (this.gisLoading) return;
+    this.gisLoading = true;
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => { this.gisLoading = false; done(); };
+    script.onerror = () => { this.gisLoading = false; };
+    document.head.appendChild(script);
+  }
+
+  initIdentityClient() {
+    if (!this.clientId || !window.google || !window.google.accounts) return;
+    try {
+      this.tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: this.clientId,
+        scope: 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
+        callback: (tokenResponse) => this.handleTokenResponse(tokenResponse),
+        error_callback: (err) => {
+          console.error('Google OAuth Error:', err);
+          this.setSyncStatus('error', 'Auth Failed');
+          this.app.showToast('Google Sign-in failed. Please verify your Client ID and origin.', 'error');
+        }
+      });
+    } catch (e) {
+      console.warn('Google Identity initialization error:', e);
+    }
+  }
+
   initGoogleIdentity() {
+    // Re-entry (modal open / client ID change) must not stack timers.
+    clearTimeout(this.startupSyncTimer);
+    clearInterval(this.periodicSyncTimer);
+
     // 1. Check local server and sync
     this.checkServerStatusAndSync();
 
@@ -76,46 +128,36 @@ class GoogleSyncEngine {
     };
 
     window.onNativeGoogleDriveRestore = (jsonString) => {
-      if (!jsonString) return;
-      try {
-        const parsed = JSON.parse(jsonString);
-        const contactsToImport = Array.isArray(parsed) ? parsed : (parsed.contacts && Array.isArray(parsed.contacts) ? parsed.contacts : null);
-        if (!contactsToImport) {
-          throw new Error('Invalid format');
-        }
-        const merged = this.mergeContacts(this.app.contacts, contactsToImport);
-        this.app.contacts = merged;
-        this.app.saveContacts();
-        this.app.render();
-        this.app.showToast(`🎉 Restored ${contactsToImport.length} contacts from Google Drive!`, 'success');
-        this.app.playChime('success');
-        const modal = document.getElementById('googleSyncModal');
-        if (modal) modal.style.display = 'none';
-      } catch (e) {
-        console.error('Failed to parse Drive backup:', e);
-        this.app.showToast('Could not parse Google Drive backup file.', 'error');
+      let raw = jsonString;
+      if (!raw && window.AndroidBridge && typeof window.AndroidBridge.getPendingRestoreJson === 'function') {
+        raw = window.AndroidBridge.getPendingRestoreJson();
       }
+      if (!raw) return;
+      this.app.handleImportedJsonString(raw);
     };
 
-    // 4. Initialize Google Identity Services if available and on HTTP
-    if (window.location.protocol !== 'file:' && window.google && window.google.accounts) {
-      if (this.clientId) {
-        try {
-          this.tokenClient = google.accounts.oauth2.initTokenClient({
-            client_id: this.clientId,
-            scope: 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email',
-            callback: (tokenResponse) => this.handleTokenResponse(tokenResponse),
-            error_callback: (err) => {
-              console.error('Google OAuth Error:', err);
-              this.setSyncStatus('error', 'Auth Failed');
-              this.app.showToast('Google Sign-in failed. Please verify your Client ID and origin.', 'error');
-            }
-          });
-        } catch (e) {
-          console.warn('Google Identity initialization error:', e);
-        }
+    // 4. Load Google Identity only when OAuth is configured (avoid a request on every launch).
+    if (window.location.protocol !== 'file:' && this.clientId) {
+      if (window.google && window.google.accounts) {
+        this.initIdentityClient();
+      } else {
+        this.loadGoogleIdentityScript(() => this.initIdentityClient());
       }
     }
+
+    // 5. Auto-sync on startup if a cloud channel exists
+    if (this.syncChannelId) {
+      this.startupSyncTimer = setTimeout(() => {
+        this.performTwoWaySync();
+      }, 1200);
+    }
+
+    // 6. Periodic sync only while visible and connected; hidden tabs are throttled anyway.
+    this.periodicSyncTimer = setInterval(() => {
+      if (this.syncChannelId && navigator.onLine && document.visibilityState === 'visible') {
+        this.performTwoWaySync();
+      }
+    }, 120000);
 
     this.updateSyncUI();
   }
@@ -133,12 +175,7 @@ class GoogleSyncEngine {
   // ========================================================================
 
   async checkServerStatusAndSync() {
-    // Skip localhost network requests when running offline or on cloud host to keep app startup blazing fast
-    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    if (!isLocalhost) {
-      return;
-    }
-
+    // Probe the local server from any origin; a 404 on the hosted site is harmless.
     const endpointsToTry = ['/api/info'];
     let activeBase = null;
     let foundInfo = null;
@@ -182,10 +219,8 @@ class GoogleSyncEngine {
         if (syncRes.ok) {
           const syncData = await syncRes.json();
           if (syncData && Array.isArray(syncData.contacts) && syncData.contacts.length > 0) {
-            const merged = this.mergeContacts(this.app.contacts, syncData.contacts);
-            this.app.contacts = merged;
-            this.app.saveContacts();
-            this.app.render();
+            const merged = this.mergeContacts(this.app.syncPayloadContacts(), syncData.contacts);
+            this.app.applyMerged(merged);
           } else if (this.app.contacts && this.app.contacts.length > 0) {
             await this.pushToLocalSyncServer();
           }
@@ -217,7 +252,7 @@ class GoogleSyncEngine {
         body: JSON.stringify({
           lastUpdated: new Date().toISOString(),
           user: this.userProfile ? this.userProfile.email : 'local',
-          contacts: this.app.contacts
+          contacts: this.app.syncPayloadContacts()
         })
       });
     } catch (e) {
@@ -228,10 +263,45 @@ class GoogleSyncEngine {
   // ========================================================================
   // GOOGLE ACCOUNT EMAIL PROFILE LINKING (ZERO DEVELOPER SETUP)
   // ========================================================================
+  // GOOGLE ACCOUNT EMAIL PROFILE LINKING & CLOUD SYNC (KVDB.IO REST KV)
+  // ========================================================================
+
+  async cloudSave(key, payload) {
+    if (!key) return false;
+    const cleanKey = 'orb_' + encodeURIComponent(key.trim().toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_'));
+    const url = `https://kvdb.io/39oKumyip2QXcvurKLP8nd/${cleanKey}`;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn('Cloud save error:', e);
+      return false;
+    }
+  }
+
+  async cloudLoad(key) {
+    if (!key) return null;
+    const cleanKey = 'orb_' + encodeURIComponent(key.trim().toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '_'));
+    const url = `https://kvdb.io/39oKumyip2QXcvurKLP8nd/${cleanKey}`;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const text = await res.text();
+      if (!text || text.trim() === '') return null;
+      return JSON.parse(text);
+    } catch (e) {
+      console.warn('Cloud load error:', e);
+      return null;
+    }
+  }
 
   async linkGoogleEmail(email, name = null) {
     if (!email || !email.includes('@')) {
-      this.app.showToast('Please enter a valid Google email address.', 'error');
+      this.app.showToast('Please enter a valid email address for your profile label.', 'error');
       const input = document.getElementById('googleAccountEmailInput');
       if (input) input.focus();
       return;
@@ -240,13 +310,19 @@ class GoogleSyncEngine {
     const cleanEmail = email.trim().toLowerCase();
     const userName = name || cleanEmail.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
+    // This is only a display label — it proves nothing about account ownership.
     this.userProfile = {
       name: userName,
       email: cleanEmail,
       picture: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(cleanEmail)}`
     };
     this.syncMode = 'email_linked';
+    this.syncChannelId = this.createSyncKey();
     this.lastSyncTime = new Date();
+
+    this.setSyncStatus('syncing', 'Connecting Cloud...');
+    await this.performTwoWaySync();
+
     this.saveConfig();
 
     // Push state to local server if active
@@ -254,10 +330,74 @@ class GoogleSyncEngine {
       await this.pushToLocalSyncServer();
     }
 
+    this.updateSyncUI();
     this.setSyncStatus('synced', `${userName} (Synced)`);
-    this.app.showToast(`✅ Linked to Google Account: ${cleanEmail}! Circle synced.`, 'success');
+    this.app.showToast('✅ Cloud sync channel created. Copy your Sync Key to pair another device.', 'success');
     this.app.playChime('success');
     this.openConfigModal();
+  }
+
+  async pairSyncKey(syncKey) {
+    // Short keys are guessable and would expose whatever is stored under them.
+    if (!syncKey || syncKey.trim().length < 16) {
+      this.app.showToast('Sync Keys are at least 16 characters. Use the key shown on the other device.', 'error');
+      return;
+    }
+    const cleanKey = syncKey.trim().toLowerCase();
+    this.setSyncStatus('syncing', 'Pairing & Syncing...');
+
+    try {
+      const remoteObj = await this.cloudLoad(cleanKey);
+      if (remoteObj && Array.isArray(remoteObj.contacts)) {
+        this.syncChannelId = cleanKey;
+        if (remoteObj.email && !this.userProfile) {
+          const cleanEmail = remoteObj.email;
+          this.userProfile = {
+            name: cleanEmail.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+            email: cleanEmail,
+            picture: `https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(cleanEmail)}`
+          };
+        }
+        const merged = this.mergeContacts(this.app.syncPayloadContacts(), remoteObj.contacts);
+        this.app.applyMerged(merged);
+
+        // Push combined state back so both devices are unified
+        await this.cloudSave(cleanKey, {
+          email: this.userProfile ? this.userProfile.email : cleanKey,
+          lastUpdated: new Date().toISOString(),
+          contactsCount: merged.length,
+          contacts: merged
+        });
+
+        this.syncMode = 'email_linked';
+        this.lastSyncTime = new Date();
+        this.saveConfig();
+        this.updateSyncUI();
+        this.setSyncStatus('synced', this.userProfile ? `${this.userProfile.name} (Synced)` : 'Cloud Synced');
+        this.app.showToast(`🎉 Paired successfully! Synced ${merged.length} contacts!`, 'success');
+        this.app.playChime('success');
+        return;
+      } else {
+        // If key is new, initialize it with current contacts
+        this.syncChannelId = cleanKey;
+        await this.cloudSave(cleanKey, {
+          email: this.userProfile ? this.userProfile.email : cleanKey,
+          lastUpdated: new Date().toISOString(),
+          contactsCount: this.app.syncPayloadContacts().length,
+          contacts: this.app.syncPayloadContacts()
+        });
+        this.saveConfig();
+        this.updateSyncUI();
+        this.setSyncStatus('synced', 'Channel Created');
+        this.app.showToast(`✨ Created sync channel: ${cleanKey}!`, 'success');
+        this.app.playChime('success');
+        return;
+      }
+    } catch (err) {
+      console.error('Pair sync error:', err);
+      this.app.showToast('Network error while pairing. Check your connection.', 'error');
+      this.setSyncStatus('error', 'Connection Error');
+    }
   }
 
   // ========================================================================
@@ -269,7 +409,38 @@ class GoogleSyncEngine {
 
     let syncedChannels = [];
 
-    // 1. Sync with Local PC Server (/api/sync)
+    // 1. Cloud Sync Channel (Cross-Device kvdb.io REST KV)
+    const activeKey = this.syncChannelId;
+    if (activeKey) {
+      try {
+        const remoteObj = await this.cloudLoad(activeKey);
+        if (remoteObj && Array.isArray(remoteObj.contacts)) {
+          const merged = this.mergeContacts(this.app.syncPayloadContacts(), remoteObj.contacts);
+          this.app.applyMerged(merged);
+
+          await this.cloudSave(activeKey, {
+            email: this.userProfile ? this.userProfile.email : activeKey,
+            lastUpdated: new Date().toISOString(),
+            contactsCount: merged.length,
+            contacts: merged
+          });
+          syncedChannels.push('Cloud Sync');
+        } else {
+          // Push local contacts to initialize remote channel
+          await this.cloudSave(activeKey, {
+            email: this.userProfile ? this.userProfile.email : activeKey,
+            lastUpdated: new Date().toISOString(),
+            contactsCount: this.app.syncPayloadContacts().length,
+            contacts: this.app.syncPayloadContacts()
+          });
+          syncedChannels.push('Cloud Sync (Pushed)');
+        }
+      } catch (err) {
+        console.warn('Cloud sync error:', err);
+      }
+    }
+
+    // 2. Sync with Local PC Server (/api/sync)
     if (this.isLocalSyncActive) {
       try {
         await this.pushToLocalSyncServer();
@@ -277,10 +448,8 @@ class GoogleSyncEngine {
         if (res.ok) {
           const remote = await res.json();
           if (remote && Array.isArray(remote.contacts)) {
-            const merged = this.mergeContacts(this.app.contacts, remote.contacts);
-            this.app.contacts = merged;
-            this.app.saveContacts();
-            this.app.render();
+            const merged = this.mergeContacts(this.app.syncPayloadContacts(), remote.contacts);
+            this.app.applyMerged(merged);
           }
         }
         syncedChannels.push('Local Wi-Fi');
@@ -289,7 +458,7 @@ class GoogleSyncEngine {
       }
     }
 
-    // 2. Sync with Google Drive AppData (OAuth 2.0)
+    // 3. Sync with Google Drive AppData (OAuth 2.0)
     if (this.accessToken && Date.now() < this.tokenExpiresAt) {
       try {
         const file = await this.findSyncFile();
@@ -297,10 +466,8 @@ class GoogleSyncEngine {
           this.driveFileId = file.id;
           const remoteData = await this.downloadSyncFile(file.id);
           if (remoteData && Array.isArray(remoteData.contacts)) {
-            const merged = this.mergeContacts(this.app.contacts, remoteData.contacts);
-            this.app.contacts = merged;
-            this.app.saveContacts();
-            this.app.render();
+            const merged = this.mergeContacts(this.app.syncPayloadContacts(), remoteData.contacts);
+            this.app.applyMerged(merged);
             await this.uploadSyncFile(file.id, {
               version: 2,
               lastUpdated: new Date().toISOString(),
@@ -313,7 +480,7 @@ class GoogleSyncEngine {
             version: 2,
             lastUpdated: new Date().toISOString(),
             device: navigator.userAgent.includes('Android') ? 'Android' : 'Desktop',
-            contacts: this.app.contacts
+            contacts: this.app.syncPayloadContacts()
           });
           this.driveFileId = newFileId;
         }
@@ -325,11 +492,12 @@ class GoogleSyncEngine {
 
     this.lastSyncTime = new Date();
     this.saveConfig();
+    this.updateSyncUI();
 
     if (syncedChannels.length > 0) {
       const label = this.userProfile ? `${this.userProfile.name} (Synced)` : 'Synced';
       this.setSyncStatus('synced', label);
-      this.app.showToast(`Sync complete! (${syncedChannels.join(' & ')})`, 'success');
+      this.app.showToast(`✅ Sync complete! (${syncedChannels.join(' & ')})`, 'success');
       this.app.playChime('success');
     } else if (this.userProfile) {
       this.setSyncStatus('synced', `${this.userProfile.name} (Active)`);
@@ -342,48 +510,60 @@ class GoogleSyncEngine {
 
   mergeContacts(localContacts, remoteContacts) {
     const contactMap = new Map();
+    const stamp = c => new Date(c && c.updatedAt).getTime() || 0;
 
     (remoteContacts || []).forEach(rc => {
-      contactMap.set(rc.id, rc);
+      if (rc && rc.id) contactMap.set(rc.id, rc);
     });
 
     (localContacts || []).forEach(lc => {
-      if (!contactMap.has(lc.id)) {
+      if (!lc || !lc.id) return;
+      const rc = contactMap.get(lc.id);
+      if (!rc) {
         contactMap.set(lc.id, lc);
-      } else {
-        const rc = contactMap.get(lc.id);
-        const interactionMap = new Map();
-        (rc.interactions || []).forEach(i => interactionMap.set(i.id, i));
-        (lc.interactions || []).forEach(i => interactionMap.set(i.id, i));
-        const mergedInteractions = Array.from(interactionMap.values()).sort(
-          (a, b) => new Date(b.date) - new Date(a.date)
-        );
-
-        const mergedContact = {
-          ...rc,
-          ...lc,
-          currentXp: Math.max(lc.currentXp || 0, rc.currentXp || 0),
-          interactions: mergedInteractions,
-          promisedCall: lc.promisedCall || rc.promisedCall,
-          nextTopicsToAsk: lc.nextTopicsToAsk || rc.nextTopicsToAsk
-        };
-        contactMap.set(lc.id, mergedContact);
+        return;
       }
+
+      // Newest edit wins for scalar fields and for the deleted flag (tombstone).
+      const useLocal = stamp(lc) >= stamp(rc);
+      const winner = useLocal ? lc : rc;
+      const loser = useLocal ? rc : lc;
+
+      const interactionMap = new Map();
+      (rc.interactions || []).forEach(i => interactionMap.set(i.id, i));
+      (lc.interactions || []).forEach(i => interactionMap.set(i.id, i));
+      const mergedInteractions = Array.from(interactionMap.values()).sort(
+        (a, b) => new Date(b.date) - new Date(a.date)
+      );
+
+      contactMap.set(lc.id, {
+        ...loser,
+        ...winner,
+        currentXp: Math.max(lc.currentXp || 0, rc.currentXp || 0),
+        interactions: mergedInteractions,
+        updatedAt: winner.updatedAt || new Date().toISOString()
+      });
     });
 
-    return Array.from(contactMap.values());
+    // Tombstones must not reappear as contacts on either device.
+    return Array.from(contactMap.values()).filter(c => !c.deleted);
   }
 
   scheduleAutoSync() {
     clearTimeout(this.syncDebounceTimer);
     this.syncDebounceTimer = setTimeout(() => {
-      if (this.isLocalSyncActive) {
-        this.pushToLocalSyncServer();
-      }
-      if (this.accessToken) {
+      // One write path only: performTwoWaySync already covers the cloud channel and Drive.
+      if (this.accessToken || this.isLocalSyncActive) {
         this.performTwoWaySync();
+      } else if (this.syncChannelId) {
+        this.cloudSave(this.syncChannelId, {
+          email: this.userProfile ? this.userProfile.email : this.syncChannelId,
+          lastUpdated: new Date().toISOString(),
+          contactsCount: this.app.syncPayloadContacts().length,
+          contacts: this.app.syncPayloadContacts()
+        }).catch(() => {});
       }
-    }, 1500);
+    }, 2000);
   }
 
   // ========================================================================
@@ -393,11 +573,11 @@ class GoogleSyncEngine {
   exportDirectGoogleDrive() {
     const backupPayload = {
       app: 'Orbit Social Circle Tracker',
-      version: '1.0.1',
+      version: '1.0.5',
       exportedAt: new Date().toISOString(),
       account: this.userProfile ? this.userProfile.email : 'local',
-      contactsCount: this.app.contacts.length,
-      contacts: this.app.contacts
+      contactsCount: this.app.syncPayloadContacts().length,
+      contacts: this.app.syncPayloadContacts()
     };
     const jsonString = JSON.stringify(backupPayload, null, 2);
     const filename = `orbit_backup_${new Date().toISOString().slice(0, 10)}.json`;
@@ -482,10 +662,8 @@ class GoogleSyncEngine {
           throw new Error('File does not contain a valid contacts array.');
         }
 
-        const merged = this.mergeContacts(this.app.contacts, contactsToImport);
-        this.app.contacts = merged;
-        this.app.saveContacts();
-        this.app.render();
+        const merged = this.mergeContacts(this.app.syncPayloadContacts(), contactsToImport);
+        this.app.applyMerged(merged);
 
         if (this.isLocalSyncActive) {
           this.pushToLocalSyncServer();
@@ -541,16 +719,20 @@ class GoogleSyncEngine {
     this.clientId = clientId;
     this.saveConfig();
 
-    if (!this.tokenClient && window.google && window.google.accounts) {
-      this.initGoogleIdentity();
-    }
+    const signIn = () => {
+      this.initIdentityClient();
+      if (this.tokenClient) {
+        this.setSyncStatus('syncing', 'Signing in...');
+        this.tokenClient.requestAccessToken({ prompt: '' });
+      }
+    };
 
-    if (this.tokenClient) {
-      this.setSyncStatus('syncing', 'Signing in...');
-      this.tokenClient.requestAccessToken({ prompt: '' });
-    } else {
-      this.app.showToast('Google Identity library is initializing. Please try again in 2 seconds.', 'info');
+    if (!window.google || !window.google.accounts) {
+      this.app.showToast('Loading Google Identity…', 'info');
+      this.loadGoogleIdentityScript(signIn);
+      return;
     }
+    signIn();
   }
 
   async handleTokenResponse(tokenResponse) {
@@ -616,15 +798,27 @@ class GoogleSyncEngine {
       parents: [DRIVE_APP_DATA_FOLDER]
     };
 
-    const form = new FormData();
-    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-    form.append('file', new Blob([JSON.stringify(content, null, 2)], { type: 'application/json' }));
+    const boundary = 'orbitUploadBoundary';
+    const body = [
+      `--${boundary}`,
+      'Content-Type: application/json; charset=UTF-8',
+      '',
+      JSON.stringify(metadata),
+      `--${boundary}`,
+      'Content-Type: application/json; charset=UTF-8',
+      '',
+      JSON.stringify(content),
+      `--${boundary}--`
+    ].join('\r\n');
 
     const url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id';
     const res = await fetch(url, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${this.accessToken}` },
-      body: form
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`
+      },
+      body
     });
     if (!res.ok) throw new Error(`Drive create failed: ${res.statusText}`);
     const data = await res.json();
@@ -688,6 +882,17 @@ class GoogleSyncEngine {
         mobileSyncBtn.classList.remove('nav-syncing');
       }
     }
+
+    const syncChannelBox = document.getElementById('syncChannelDetailsBox');
+    const syncKeyDisplay = document.getElementById('displaySyncChannelKey');
+    if (syncChannelBox && syncKeyDisplay) {
+      if (this.syncChannelId) {
+        syncChannelBox.style.display = 'block';
+        syncKeyDisplay.textContent = this.syncChannelId;
+      } else {
+        syncChannelBox.style.display = 'none';
+      }
+    }
   }
 
   getRelativeTime(date) {
@@ -712,6 +917,17 @@ class GoogleSyncEngine {
     const emailInput = document.getElementById('googleAccountEmailInput');
     if (emailInput && this.userProfile) {
       emailInput.value = this.userProfile.email || '';
+    }
+
+    const syncChannelBox = document.getElementById('syncChannelDetailsBox');
+    const syncKeyDisplay = document.getElementById('displaySyncChannelKey');
+    if (syncChannelBox && syncKeyDisplay) {
+      if (this.syncChannelId) {
+        syncChannelBox.style.display = 'block';
+        syncKeyDisplay.textContent = this.syncChannelId;
+      } else {
+        syncChannelBox.style.display = 'none';
+      }
     }
 
     const profileCard = document.getElementById('googleAccountProfileCard');
@@ -739,10 +955,17 @@ class GoogleSyncEngine {
   }
 
   disconnect() {
+    if (this.accessToken && window.google && window.google.accounts && window.google.accounts.oauth2 && window.google.accounts.oauth2.revoke) {
+      try { google.accounts.oauth2.revoke(this.accessToken, () => {}); } catch (e) { /* best effort */ }
+    }
+    clearTimeout(this.startupSyncTimer);
+    clearInterval(this.periodicSyncTimer);
     this.accessToken = null;
     this.userProfile = null;
     this.tokenExpiresAt = 0;
     this.lastSyncTime = null;
+    this.syncChannelId = null;
+    this.driveFileId = null;
     this.syncMode = 'none';
     this.saveConfig();
     this.setSyncStatus('disconnected', 'Disconnected');

@@ -1,7 +1,8 @@
 # Local Mobile Host for Orbit Social Circle Tracker
-# Runs a lightweight HTTP server on port 5000 accessible from PC and Android phone on local Wi-Fi
+# Runs a lightweight HTTP server accessible from PC and Android phone on local Wi-Fi
+param([int]$Port = 5000)
 
-$port = 5000
+$port = $Port
 $baseDir = $PSScriptRoot
 
 $ip = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | 
@@ -72,13 +73,12 @@ while ($listener.IsListening) {
             $rawPath = "/index.html"
         }
 
-        # CORS headers
-        $res.Headers.Add("Access-Control-Allow-Origin", "*")
-        $res.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        $res.Headers.Add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        # The app is same-origin; no CORS wildcard is needed.
+        $res.Headers.Add("Cache-Control", "no-store")
+        $res.Headers.Add("X-Content-Type-Options", "nosniff")
 
         if ($req.HttpMethod -eq "OPTIONS") {
-            $res.StatusCode = 200
+            $res.StatusCode = 204
             $res.Close()
             continue
         }
@@ -110,7 +110,10 @@ while ($listener.IsListening) {
                 $streamReader = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
                 $body = $streamReader.ReadToEnd()
                 $streamReader.Close()
-                [System.IO.File]::WriteAllText($syncFile, $body, [System.Text.Encoding]::UTF8)
+                $tmp = $syncFile + ".tmp"
+                [System.IO.File]::WriteAllText($tmp, $body, (New-Object System.Text.UTF8Encoding($false)))
+                [System.IO.File]::Delete($syncFile)
+                [System.IO.File]::Move($tmp, $syncFile)
                 
                 $respBytes = [System.Text.Encoding]::UTF8.GetBytes("{`"status`":`"synced`"}")
                 $res.StatusCode = 200
@@ -137,9 +140,17 @@ while ($listener.IsListening) {
         $localFilePath = [System.IO.Path]::Combine($baseDir, $rawPath.TrimStart('/').Replace('/', [System.IO.Path]::DirectorySeparatorChar))
         $fullPath = [System.IO.Path]::GetFullPath($localFilePath)
 
-        # Security check
-        if (-not $fullPath.StartsWith([System.IO.Path]::GetFullPath($baseDir))) {
-            $res.StatusCode = 403
+        # Only public web assets are served; scripts, tokens and data files stay private.
+        $allowed = @("index.html", "styles.css", "app.js", "google-sync.js", "manifest.json", "service-worker.js")
+        $name = [System.IO.Path]::GetFileName($fullPath)
+        $isIcon = $fullPath.StartsWith(([System.IO.Path]::Combine($baseDir, "icons")), [System.StringComparison]::OrdinalIgnoreCase)
+        if (-not $fullPath.StartsWith([System.IO.Path]::GetFullPath($baseDir), [System.StringComparison]::OrdinalIgnoreCase) -or
+            (-not ($allowed -contains $name) -and -not $isIcon)) {
+            $res.StatusCode = 404
+            $msg = [System.Text.Encoding]::UTF8.GetBytes("Not Found")
+            $res.ContentLength64 = $msg.Length
+            $res.OutputStream.Write($msg, 0, $msg.Length)
+            $res.OutputStream.Flush()
             $res.Close()
             continue
         }

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'orbit-cache-v3';
+const CACHE_NAME = 'orbit-cache-v7';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -15,7 +15,7 @@ const ASSETS_TO_CACHE = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE);
+      return Promise.all(ASSETS_TO_CACHE.map(url => cache.add(url).catch(() => {})));
     }).then(() => self.skipWaiting())
   );
 });
@@ -37,8 +37,11 @@ self.addEventListener('activate', (event) => {
 
 // Fetch: Cache-First for static assets, network-first for Google APIs with full offline fallback
 self.addEventListener('fetch', (event) => {
-  // Pass Google API and Auth requests directly to network
-  if (event.request.url.includes('googleapis.com') || event.request.url.includes('accounts.google.com')) {
+  // Never cache auth, cloud sync or live API data.
+  if (event.request.url.includes('googleapis.com') ||
+      event.request.url.includes('accounts.google.com') ||
+      event.request.url.includes('kvdb.io') ||
+      event.request.url.includes('/api/')) {
     return;
   }
 
@@ -59,7 +62,7 @@ self.addEventListener('fetch', (event) => {
       }).catch(() => {
         // Fallback for navigation and document requests when completely offline
         if (event.request.mode === 'navigate' || event.request.destination === 'document') {
-          return caches.match('./index.html') || caches.match('/');
+          return caches.match('./index.html').then(r => r || caches.match('/'));
         }
       });
     })

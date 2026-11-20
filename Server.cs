@@ -13,18 +13,18 @@ namespace OrbitTracker {
         static string localIp;
         static string syncFile;
 
+        static readonly HashSet<string> publicFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            "index.html", "styles.css", "app.js", "google-sync.js", "manifest.json",
+            "service-worker.js", "orbit.apk"
+        };
+
         static Dictionary<string, string> mimeTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
             { ".html", "text/html; charset=utf-8" },
-            { ".htm",  "text/html; charset=utf-8" },
             { ".css",  "text/css; charset=utf-8" },
             { ".js",   "application/javascript; charset=utf-8" },
             { ".json", "application/json; charset=utf-8" },
             { ".png",  "image/png" },
-            { ".jpg",  "image/jpeg" },
-            { ".jpeg", "image/jpeg" },
-            { ".svg",  "image/svg+xml" },
-            { ".ico",  "image/x-icon" },
-            { ".webp", "image/webp" }
+            { ".apk",  "application/vnd.android.package-archive" }
         };
 
         static void SafeLog(string msg, ConsoleColor? color = null) {
@@ -36,9 +36,7 @@ namespace OrbitTracker {
         }
 
         static void SetTitle(string title) {
-            try {
-                Console.Title = title;
-            } catch {}
+            try { Console.Title = title; } catch {}
         }
 
         static void Main(string[] args) {
@@ -60,7 +58,7 @@ namespace OrbitTracker {
             }
 
             if (server == null) {
-                SafeLog("Failed to bind any port (5000, 8080, 5050). Check firewall or permissions.", ConsoleColor.Red);
+                SafeLog("Failed to bind any port (5000, 8080, 5050, 3000). Check firewall or permissions.", ConsoleColor.Red);
                 return;
             }
 
@@ -76,17 +74,11 @@ namespace OrbitTracker {
             SafeLog("  Server is active. Keep this window open while using Orbit.", ConsoleColor.DarkGray);
             SafeLog("================================================================", ConsoleColor.Cyan);
 
-            // Write active port to a small text file so frontends/scripts can read it
-            try {
-                File.WriteAllText(Path.Combine(baseDir, "active_port.txt"), port.ToString());
-            } catch {}
+            try { File.WriteAllText(Path.Combine(baseDir, "active_port.txt"), port.ToString()); } catch {}
 
-            // Launch browser if --open flag is present
             foreach (string arg in args) {
                 if (arg.Equals("--open", StringComparison.OrdinalIgnoreCase)) {
-                    try {
-                        System.Diagnostics.Process.Start("http://localhost:" + port + "/");
-                    } catch {}
+                    try { System.Diagnostics.Process.Start("http://localhost:" + port + "/"); } catch {}
                 }
             }
 
@@ -107,9 +99,24 @@ namespace OrbitTracker {
                 using (NetworkStream stream = client.GetStream())
                 using (MemoryStream ms = new MemoryStream()) {
                     byte[] buffer = new byte[8192];
-                    int bytesRead = stream.Read(buffer, 0, buffer.Length);
-                    if (bytesRead <= 0) { client.Close(); return; }
-                    ms.Write(buffer, 0, bytesRead);
+                    int bytesRead;
+                    int headerEnd = -1;
+                    int contentLength = 0;
+                    while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) > 0) {
+                        ms.Write(buffer, 0, bytesRead);
+                        byte[] soFar = ms.ToArray();
+                        string text = Encoding.UTF8.GetString(soFar);
+                        headerEnd = text.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+                        if (headerEnd >= 0) {
+                            foreach (string line in text.Substring(0, headerEnd).Split(new string[] { "\r\n" }, StringSplitOptions.None)) {
+                                if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase)) {
+                                    int.TryParse(line.Substring(15).Trim(), out contentLength);
+                                }
+                            }
+                            if (soFar.Length >= headerEnd + 4 + contentLength) break;
+                        }
+                        if (ms.Length > 16 * 1024 * 1024) break;
+                    }
 
                     string rawHeader = Encoding.UTF8.GetString(ms.ToArray());
                     string[] lines = rawHeader.Split(new string[] { "\r\n" }, StringSplitOptions.None);
@@ -119,83 +126,74 @@ namespace OrbitTracker {
                     if (requestLine.Length < 2) { client.Close(); return; }
 
                     string method = requestLine[0].ToUpper();
-                    string rawUrl = requestLine[1];
-                    string path = rawUrl.Split('?')[0];
+                    string path = requestLine[1].Split('?')[0];
 
-                    // Handle CORS preflight OPTIONS
+                    // Normalize absolute URLs sent by reverse proxies before routing.
+                    if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                        path.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) {
+                        try { path = new Uri(path).AbsolutePath; } catch {}
+                    }
+
                     if (method == "OPTIONS") {
-                        SendResponse(stream, 200, "OK", "text/plain", new byte[0]);
-                        client.Close();
+                        SendResponse(stream, 204, "No Content", "text/plain", new byte[0], false);
                         return;
                     }
 
-                    // Endpoint: /api/info
                     if (path.Equals("/api/info", StringComparison.OrdinalIgnoreCase)) {
-                        string infoJson = "{\"status\":\"online\",\"port\":" + port + ",\"ip\":\"" + localIp + 
+                        string infoJson = "{\"status\":\"online\",\"port\":" + port + ",\"ip\":\"" + localIp +
                                           "\",\"pcUrl\":\"http://localhost:" + port + "/\",\"mobileUrl\":\"http://" + localIp + ":" + port + "/\"}";
-                        SendResponse(stream, 200, "OK", "application/json; charset=utf-8", Encoding.UTF8.GetBytes(infoJson));
-                        client.Close();
+                        SendResponse(stream, 200, "OK", "application/json; charset=utf-8", Encoding.UTF8.GetBytes(infoJson), false);
                         return;
                     }
 
-                    // Endpoint: /api/sync
                     if (path.Equals("/api/sync", StringComparison.OrdinalIgnoreCase)) {
                         if (method == "POST") {
-                            int headerEnd = rawHeader.IndexOf("\r\n\r\n");
-                            string body = "";
-                            if (headerEnd >= 0) {
-                                body = rawHeader.Substring(headerEnd + 4);
-                            }
+                            string body = headerEnd >= 0 && rawHeader.Length >= headerEnd + 4
+                                ? rawHeader.Substring(headerEnd + 4, Math.Min(contentLength, rawHeader.Length - headerEnd - 4))
+                                : "";
                             try {
-                                File.WriteAllText(syncFile, body, Encoding.UTF8);
-                            } catch {}
-                            byte[] okResp = Encoding.UTF8.GetBytes("{\"status\":\"synced\"}");
-                            SendResponse(stream, 200, "OK", "application/json; charset=utf-8", okResp);
-                        } else {
-                            byte[] syncBytes;
-                            if (File.Exists(syncFile)) {
-                                syncBytes = File.ReadAllBytes(syncFile);
-                            } else {
-                                syncBytes = Encoding.UTF8.GetBytes("{\"contacts\":[]}");
+                                string tmp = syncFile + ".tmp";
+                                File.WriteAllText(tmp, body, new UTF8Encoding(false));
+                                File.Delete(syncFile);
+                                File.Move(tmp, syncFile);
+                            } catch (Exception e) {
+                                SafeLog("Sync write failed: " + e.Message, ConsoleColor.Red);
+                                SendResponse(stream, 500, "Internal Server Error", "text/plain", Encoding.UTF8.GetBytes("Write failed"), false);
+                                return;
                             }
-                            SendResponse(stream, 200, "OK", "application/json; charset=utf-8", syncBytes);
+                            SendResponse(stream, 200, "OK", "application/json; charset=utf-8", Encoding.UTF8.GetBytes("{\"status\":\"synced\"}"), false);
+                        } else {
+                            byte[] syncBytes = File.Exists(syncFile)
+                                ? File.ReadAllBytes(syncFile)
+                                : Encoding.UTF8.GetBytes("{\"contacts\":[]}");
+                            SendResponse(stream, 200, "OK", "application/json; charset=utf-8", syncBytes, false);
                         }
-                        client.Close();
                         return;
                     }
 
-                    // Support absolute URLs sent by reverse proxies (e.g. GET http://localhost:5000/index.html)
-                    if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || 
-                        path.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) {
-                        try {
-                            Uri u = new Uri(path);
-                            path = u.AbsolutePath;
-                        } catch {}
+                    // Static files: whitelist only the web app assets, never scripts, tokens or data files.
+                    if (method != "GET") {
+                        SendResponse(stream, 405, "Method Not Allowed", "text/plain", new byte[0], false);
+                        return;
                     }
-
-                    // Static file serving
-                    if (path == "/" || string.IsNullOrEmpty(path)) {
-                        path = "/index.html";
-                    }
+                    if (path == "/" || string.IsNullOrEmpty(path)) path = "/index.html";
 
                     string relPath = path.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
                     string filePath = Path.GetFullPath(Path.Combine(baseDir, relPath));
+                    string name = Path.GetFileName(filePath);
+                    bool isIcon = relPath.StartsWith("icons" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                                  && mimeTypes.ContainsKey(Path.GetExtension(filePath));
 
-                    // Directory traversal protection
-                    if (!filePath.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase)) {
-                        SendResponse(stream, 403, "Forbidden", "text/plain", Encoding.UTF8.GetBytes("Access Denied"));
+                    if (!filePath.StartsWith(baseDir, StringComparison.OrdinalIgnoreCase) ||
+                        (!publicFiles.Contains(name) && !isIcon) || !File.Exists(filePath)) {
+                        SendResponse(stream, 404, "Not Found", "text/plain", Encoding.UTF8.GetBytes("Not Found"), false);
                         return;
                     }
 
-                    if (File.Exists(filePath)) {
-                        string ext = Path.GetExtension(filePath);
-                        string mime = mimeTypes.ContainsKey(ext) ? mimeTypes[ext] : "application/octet-stream";
-                        byte[] fileBytes = File.ReadAllBytes(filePath);
-                        SendResponse(stream, 200, "OK", mime, fileBytes);
-                    } else {
-                        byte[] notFound = Encoding.UTF8.GetBytes("File Not Found: " + path);
-                        SendResponse(stream, 404, "Not Found", "text/plain", notFound);
-                    }
+                    string ext = Path.GetExtension(filePath);
+                    string mime = mimeTypes.ContainsKey(ext) ? mimeTypes[ext] : "application/octet-stream";
+                    // Local dev server: always serve the latest files.
+                    SendResponse(stream, 200, "OK", mime, File.ReadAllBytes(filePath), false);
                 }
             } catch (Exception) {
                 // Client disconnected
@@ -205,19 +203,16 @@ namespace OrbitTracker {
             }
         }
 
-        static void SendResponse(NetworkStream stream, int statusCode, string statusMsg, string contentType, byte[] body) {
+        static void SendResponse(NetworkStream stream, int statusCode, string statusMsg, string contentType, byte[] body, bool cacheable) {
             string headers = "HTTP/1.1 " + statusCode + " " + statusMsg + "\r\n" +
                              "Content-Type: " + contentType + "\r\n" +
                              "Content-Length: " + body.Length + "\r\n" +
-                             "Access-Control-Allow-Origin: *\r\n" +
-                             "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
-                             "Access-Control-Allow-Headers: Content-Type, Authorization\r\n" +
+                             "Cache-Control: " + (cacheable ? "public, max-age=3600" : "no-store") + "\r\n" +
+                             "X-Content-Type-Options: nosniff\r\n" +
                              "Connection: close\r\n\r\n";
             byte[] headerBytes = Encoding.UTF8.GetBytes(headers);
             stream.Write(headerBytes, 0, headerBytes.Length);
-            if (body.Length > 0) {
-                stream.Write(body, 0, body.Length);
-            }
+            if (body.Length > 0) stream.Write(body, 0, body.Length);
             stream.Flush();
         }
 
@@ -226,9 +221,7 @@ namespace OrbitTracker {
                 using (Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, 0)) {
                     socket.Connect("8.8.8.8", 65530);
                     IPEndPoint endPoint = socket.LocalEndPoint as IPEndPoint;
-                    if (endPoint != null) {
-                        return endPoint.Address.ToString();
-                    }
+                    if (endPoint != null) return endPoint.Address.ToString();
                 }
             } catch {}
             return "127.0.0.1";

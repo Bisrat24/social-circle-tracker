@@ -24,12 +24,14 @@ We all experience this:
 
 ## 📱 Android Version & How to Install
 
-### 🌐 Live Cloud Web App & Direct APK Download (Version 1.0.3)
+### 🌐 Live Cloud Web App & Direct APK Download (Version 1.0.5)
 
 | Platform | Link | Description |
 |---|---|---|
 | **Live Cloud Web App** | [https://aerial-latency-5do0q.ship.place/](https://aerial-latency-5do0q.ship.place/) | 24/7 HTTPS cloud deployment with instant mobile & desktop access |
-| **Direct APK Download** | [https://aerial-latency-5do0q.ship.place/Orbit.apk](https://aerial-latency-5do0q.ship.place/Orbit.apk) | Native signed Android APK (0.18 MB, v1+v2+v3 signatures, offline-capable) |
+| **Direct APK Download** | [https://aerial-latency-5do0q.ship.place/Orbit.apk](https://aerial-latency-5do0q.ship.place/Orbit.apk) | Native signed Android APK (0.25 MB, v1+v2+v3 signatures, fully offline) |
+
+> **Before redistributing:** the hosted deployment's `claim_token` was previously committed in `hosted_info.json` and the deployment expired on 2026-11-18. Run `deploy-hosted.ps1` to get a fresh URL and token, then update the links above. `hosted_info.json` is now gitignored.
 
 #### How to install it on your Android phone:
 1. Tap the **[Download Orbit.apk](https://aerial-latency-5do0q.ship.place/Orbit.apk)** link on your phone.
@@ -43,10 +45,10 @@ We all experience this:
 
 Orbit offers flexible ways to keep your social circle in sync between PC and Android:
 
-### Method 1: Instant Google Account & Cloud Sync (Zero Setup)
+### Method 1: Private Cloud Sync Channel (Zero Setup)
 - Click **"Sync with Google"** in the top header.
-- Enter your **Google Email address** and click **"⚡ Connect Account"** — Orbit links your profile, personalizes your avatar, and activates cloud-ready sync automatically!
-- **Pairing Key**: Copy your 32-character Sync Key and paste it into Orbit on any other device (or tap **"Pair & Sync"**) to immediately share and keep your contacts synchronized.
+- Enter an email address as a **display label** and click **"⚡ Connect Account"** — Orbit creates a random, unguessable Sync Key and personalizes your avatar. No account ownership is verified on this path; use the OAuth option below for authenticated Google Drive sync.
+- **Pairing Key**: Copy your 32-character Sync Key and paste it into Orbit on any other device (or tap **"Pair & Sync"**) to share and keep your contacts synchronized. Anyone with this key can read and write the channel, so treat it like a password and never post it publicly.
 - Click **"💾 Save Backup to Google Drive"**: Orbit launches the native Android Share sheet with Google Drive pre-configured to upload your backup directly, or downloads the file on web.
 - Click **"📥 Restore from Google Drive"**: Select any backup file directly from your Google Drive or local storage to restore all your friends, levels, and notes!
 
@@ -109,6 +111,11 @@ Never draw a blank on your next call:
 
 ## 🚀 Quick Launch Shortcuts
 
+- **Launch locally (recommended)**: Double-click `start-local.bat`. It compiles the tiny local server from source if needed, opens the app in your browser, and needs no cloud account or prebuilt server binary.
+- **Build the Android APK**: Double-click `build-apk.bat`. It syncs the web assets, runs `node verify.js`, builds and signs `Orbit.apk`, then tells you where to install it. Install it over the current app to see the new UI.
+- **Android reminder widget**: Long-press the home screen → Widgets → **Orbit reminders**. It shows the three contacts that need attention most; tap a name to open that contact's profile.
+- **Reminder bar**: Orbit keeps an ongoing notification showing the next due call or meeting. It restarts after a reboot, app update or swipe-from-recents; Settings shows whether battery optimization is allowing it.
+- **Call logs**: On first open the app asks for call-log access and automatically imports new calls with your friends. Note: Android does not allow any normal app to restart itself after **Settings → Force stop**.
 - **Launch on PC**: Double-click [`launch.bat`](file:///c:/Users/Bisrat/Documents/APPS/social-circle-tracker/launch.bat)
 - **Host for Android Phone on Wi-Fi**: Double-click [`host-mobile.bat`](file:///c:/Users/Bisrat/Documents/APPS/social-circle-tracker/host-mobile.bat)
 - **Native Android Studio Project**: Open [`android/`](file:///c:/Users/Bisrat/Documents/APPS/social-circle-tracker/android) in Android Studio

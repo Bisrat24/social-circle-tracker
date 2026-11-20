@@ -18,6 +18,7 @@ Orbit_staging.apk
 .gitconfig
 active_port.txt
 data_sync.json
+hosted_info.json
 
 # IDE & OS files
 .DS_Store
